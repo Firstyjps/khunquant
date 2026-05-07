@@ -585,6 +585,37 @@ func DefaultConfig() *Config {
 				Enabled: false,
 			},
 
+			// DCA — Dollar Cost Averaging (Track E)
+			CreateDCAPlan: ToolConfig{
+				Enabled: true,
+			},
+			ListDCAPlans: ToolConfig{
+				Enabled: true,
+			},
+			UpdateDCAPlan: ToolConfig{
+				Enabled: true,
+			},
+			DeleteDCAPlan: ToolConfig{
+				Enabled: true,
+			},
+			ExecuteDCAOrder: ToolConfig{
+				Enabled: true,
+			},
+			GetDCAHistory: ToolConfig{
+				Enabled: true,
+			},
+			GetDCASummary: ToolConfig{
+				Enabled: true,
+			},
+
+			// PnL — Profit and Loss (Track F)
+			GetPnLSummary: ToolConfig{
+				Enabled: true,
+			},
+			GetPnLDetail: ToolConfig{
+				Enabled: true,
+			},
+
 			// Security tools — disabled by default; opt-in for agent access to secrets
 			ConfigEncryptKeys: ToolConfig{
 				Enabled: false,

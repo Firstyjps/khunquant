@@ -196,7 +196,7 @@ export function AppHeader() {
 
         {/* Docs Link */}
         <Button variant="ghost" size="icon" className="size-8" asChild>
-          <a href="https://docs.khunquant.io" target="_blank" rel="noreferrer">
+          <a href="https://khunquant.com/docs" target="_blank" rel="noreferrer">
             <IconBook className="size-4.5" />
           </a>
         </Button>

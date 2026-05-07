@@ -32,6 +32,12 @@ Personal AI-powered quantitative portfolio assistant for the Thai investor commu
 ## License
 MIT License - Free and open source
 
+## Website
+https://khunquant.com
+
+## Documentation
+https://khunquant.com/docs
+
 ## Repository
 https://github.com/cryptoquantumwave/khunquant
 

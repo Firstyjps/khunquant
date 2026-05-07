@@ -11,12 +11,12 @@
 [![Release](https://img.shields.io/github/v/release/cryptoquantumwave/khunquant)](https://github.com/cryptoquantumwave/khunquant/releases)
 [![Issues](https://img.shields.io/github/issues/cryptoquantumwave/khunquant)](https://github.com/cryptoquantumwave/khunquant/issues)
 
-**Open-source agentic framework for personal AI portfolio management at home — built for the Thai community.**
+**Open-source agentic framework for personal AI portfolio assistant at home — built for the Thai community.**
 
 KhunQuant(คุณควอนต์) connect Thai equity markets (SET) and global digital assets through a single AI-powered orchestrator.
 All logic runs locally — your API keys and strategy parameters never leave your machine.
 
-[Report Bug](https://github.com/cryptoquantumwave/khunquant/issues) · [Request Feature](https://github.com/cryptoquantumwave/khunquant/issues) · [Documentation](https://github.com/cryptoquantumwave/khunquant/wiki) · [Discussions](https://github.com/cryptoquantumwave/khunquant/discussions)
+[Report Bug](https://github.com/cryptoquantumwave/khunquant/issues) · [Request Feature](https://github.com/cryptoquantumwave/khunquant/issues) · [Documentation](https://khunquant.com/docs) · [Website](https://khunquant.com) · [Discussions](https://github.com/cryptoquantumwave/khunquant/discussions)
 
 </div>
 
@@ -93,6 +93,43 @@ Ask the agent: <em>"What did I trade last week?"</em>
 | **Trade Journal** | Persistent trade history with execution logs, order records, and searchable snapshots across sessions |
 | **Memory Snapshots** | Save and query portfolios asset snapshot state across sessions — searchable snapshot history with summaries |
 | **Extensible Skills** | Plugin-style skills framework with ClawHub registry integration |
+
+---
+
+## Quick Start
+
+**Up in three commands.**
+
+**01 — Clone and install**
+
+```bash
+curl -fsSL https://khunquant.com/install.sh | bash
+```
+
+Or build from source:
+
+```bash
+git clone https://github.com/cryptoquantumwave/khunquant
+make install
+```
+
+Requires Go 1.22+. Installs the khunquant binary to `/usr/local/bin`.
+
+**02 — Run onboarding**
+
+```bash
+khunquant onboard
+```
+
+Set your LLM provider, add broker API keys, and configure channels in one guided flow.
+
+**03 — Start the agent**
+
+```bash
+khunquant start
+```
+
+Opens the web console at `localhost:18800`. Connect from Telegram, LINE, or Discord too.
 
 ---
 
@@ -210,7 +247,7 @@ khunquant auth encrypt
 | [OKX](https://www.okx.com) | Crypto — Global | `okx` |
 | [Settrade](https://www.settrade.com) | Thai Equities (SET) | `settrade` |
 
-See [Exchange API Credentials](https://github.com/cryptoquantumwave/khunquant/wiki) for step-by-step setup guides for each exchange.
+See [Exchange API Credentials](https://khunquant.com/docs) for step-by-step setup guides for each exchange.
 
 ---
 
@@ -286,8 +323,12 @@ Modifications and additional code by KhunQuant contributors (MIT License).
 <table border="0" cellspacing="0" cellpadding="12" width="100%">
 <tr>
 <td align="center">
+<strong><a href="https://khunquant.com">khunquant.com</a></strong>
+&nbsp;·&nbsp;
 <strong><a href="https://github.com/cryptoquantumwave/khunquant">github.com/cryptoquantumwave/khunquant</a></strong>
 <br><br>
+<a href="https://khunquant.com/docs">Documentation</a>
+&nbsp;·&nbsp;
 <a href="https://www.facebook.com/cryptoquantumwave/">Facebook</a>
 &nbsp;·&nbsp;
 <a href="mailto:support@cryptoquantumwave.com">support@cryptoquantumwave.com</a>

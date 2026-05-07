@@ -12,6 +12,10 @@ import (
 )
 
 func onboard() {
+	if !promptLegalAgreement() {
+		return
+	}
+
 	configPath := internal.GetConfigPath()
 
 	if _, err := os.Stat(configPath); err == nil {

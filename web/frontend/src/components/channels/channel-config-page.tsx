@@ -367,8 +367,8 @@ export function ChannelConfigPage({ channelName }: ChannelConfigPageProps) {
       ""
     ).toLowerCase()
     const base = language.startsWith("zh")
-      ? "https://docs.khunquant.io/zh-Hans/docs/channels"
-      : "https://docs.khunquant.io/docs/channels"
+      ? "https://khunquant.com/docs/channels"
+      : "https://khunquant.com/docs/channels"
     return `${base}/${getChannelDocSlug(channel.name)}`
   }, [channel, i18n.language, i18n.resolvedLanguage])
 
