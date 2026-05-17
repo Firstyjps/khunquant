@@ -464,6 +464,17 @@ func (c *TelegramChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMe
 
 		switch part.Type {
 		case "image":
+			if shouldSendTelegramImageAsDocument(part, localPath) {
+				docParams := &telego.SendDocumentParams{
+					ChatID:          tu.ID(chatID),
+					MessageThreadID: threadID,
+					Document:        telego.InputFile{File: file},
+					Caption:         part.Caption,
+				}
+				_, err = c.bot.SendDocument(ctx, docParams)
+				break
+			}
+
 			params := &telego.SendPhotoParams{
 				ChatID:          tu.ID(chatID),
 				MessageThreadID: threadID,
@@ -471,7 +482,7 @@ func (c *TelegramChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMe
 				Caption:         part.Caption,
 			}
 			_, err = c.bot.SendPhoto(ctx, params)
-			if err != nil && strings.Contains(err.Error(), "PHOTO_INVALID_DIMENSIONS") {
+			if err != nil && shouldFallbackTelegramPhotoToDocument(err) {
 				if _, seekErr := file.Seek(0, io.SeekStart); seekErr != nil {
 					file.Close()
 					return fmt.Errorf("telegram rewind media after photo failure: %w", channels.ErrTemporary)
@@ -523,6 +534,26 @@ func (c *TelegramChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMe
 	}
 
 	return nil
+}
+
+func shouldSendTelegramImageAsDocument(part bus.MediaPart, localPath string) bool {
+	contentType := strings.ToLower(strings.TrimSpace(part.ContentType))
+	filename := strings.ToLower(strings.TrimSpace(part.Filename))
+	ext := strings.ToLower(filepath.Ext(filename))
+	if ext == "" {
+		ext = strings.ToLower(filepath.Ext(localPath))
+	}
+
+	return contentType == "image/svg+xml" || ext == ".svg"
+}
+
+func shouldFallbackTelegramPhotoToDocument(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "PHOTO_INVALID_DIMENSIONS") ||
+		strings.Contains(msg, "IMAGE_PROCESS_FAILED")
 }
 
 func (c *TelegramChannel) handleMessage(ctx context.Context, message *telego.Message) error {

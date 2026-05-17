@@ -185,6 +185,106 @@ func TestSendMedia_ImageFallbacksToDocumentOnInvalidDimensions(t *testing.T) {
 	assert.Equal(t, "caption", constructor.calls[1].Parameters["caption"])
 }
 
+func TestSendMedia_ImageFallbacksToDocumentOnImageProcessFailed(t *testing.T) {
+	constructor := &multipartRecordingConstructor{}
+	caller := &stubCaller{
+		callFn: func(ctx context.Context, url string, data *ta.RequestData) (*ta.Response, error) {
+			switch {
+			case strings.Contains(url, "sendPhoto"):
+				return nil, errors.New(`api: 400 "Bad Request: IMAGE_PROCESS_FAILED"`)
+			case strings.Contains(url, "sendDocument"):
+				return successResponse(t), nil
+			default:
+				t.Fatalf("unexpected API call: %s", url)
+				return nil, nil
+			}
+		},
+	}
+	ch := newTestChannelWithConstructor(t, caller, constructor)
+
+	store := media.NewFileMediaStore()
+	ch.SetMediaStore(store)
+
+	tmpDir := t.TempDir()
+	localPath := filepath.Join(tmpDir, "chart.png")
+	content := []byte("fake-png-content")
+	require.NoError(t, os.WriteFile(localPath, content, 0o644))
+
+	ref, err := store.Store(
+		localPath,
+		media.MediaMeta{Filename: "chart.png", ContentType: "image/png"},
+		"scope-1",
+	)
+	require.NoError(t, err)
+
+	err = ch.SendMedia(context.Background(), bus.OutboundMediaMessage{
+		ChatID: "12345",
+		Parts: []bus.MediaPart{{
+			Type:    "image",
+			Ref:     ref,
+			Caption: "caption",
+		}},
+	})
+
+	require.NoError(t, err)
+	require.Len(t, caller.calls, 2)
+	assert.Contains(t, caller.calls[0].URL, "sendPhoto")
+	assert.Contains(t, caller.calls[1].URL, "sendDocument")
+	require.Len(t, constructor.calls, 2)
+	assert.Equal(t, len(content), constructor.calls[0].FileSizes["photo"])
+	assert.Equal(t, len(content), constructor.calls[1].FileSizes["document"])
+}
+
+func TestSendMedia_SVGImageSentAsDocument(t *testing.T) {
+	constructor := &multipartRecordingConstructor{}
+	caller := &stubCaller{
+		callFn: func(ctx context.Context, url string, data *ta.RequestData) (*ta.Response, error) {
+			if strings.Contains(url, "sendPhoto") {
+				t.Fatalf("svg should not be sent through sendPhoto: %s", url)
+			}
+			if strings.Contains(url, "sendDocument") {
+				return successResponse(t), nil
+			}
+			t.Fatalf("unexpected API call: %s", url)
+			return nil, nil
+		},
+	}
+	ch := newTestChannelWithConstructor(t, caller, constructor)
+
+	store := media.NewFileMediaStore()
+	ch.SetMediaStore(store)
+
+	tmpDir := t.TempDir()
+	localPath := filepath.Join(tmpDir, "btc_thb_1h_7d.svg")
+	content := []byte(`<svg xmlns="http://www.w3.org/2000/svg" width="100" height="50"></svg>`)
+	require.NoError(t, os.WriteFile(localPath, content, 0o644))
+
+	ref, err := store.Store(
+		localPath,
+		media.MediaMeta{Filename: "btc_thb_1h_7d.svg", ContentType: "image/svg+xml"},
+		"scope-1",
+	)
+	require.NoError(t, err)
+
+	err = ch.SendMedia(context.Background(), bus.OutboundMediaMessage{
+		ChatID: "12345",
+		Parts: []bus.MediaPart{{
+			Type:        "image",
+			Ref:         ref,
+			Filename:    "btc_thb_1h_7d.svg",
+			ContentType: "image/svg+xml",
+			Caption:     "caption",
+		}},
+	})
+
+	require.NoError(t, err)
+	require.Len(t, caller.calls, 1)
+	assert.Contains(t, caller.calls[0].URL, "sendDocument")
+	require.Len(t, constructor.calls, 1)
+	assert.Equal(t, len(content), constructor.calls[0].FileSizes["document"])
+	assert.Equal(t, "caption", constructor.calls[0].Parameters["caption"])
+}
+
 func TestSendMedia_ImageNonDimensionErrorDoesNotFallback(t *testing.T) {
 	constructor := &multipartRecordingConstructor{}
 	caller := &stubCaller{
