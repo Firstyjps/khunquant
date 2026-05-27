@@ -25,7 +25,7 @@ func NewCalculateIndicatorsTool(cfg *config.Config) *CalculateIndicatorsTool {
 func (t *CalculateIndicatorsTool) Name() string { return NameCalculateIndicators }
 
 func (t *CalculateIndicatorsTool) Description() string {
-	return "Compute technical indicators (SMA, EMA, RSI, MACD, Bollinger Bands, ATR, Stochastic, VWAP) from live OHLCV data. Returns the last 5 values of each indicator."
+	return "Compute technical indicators (SMA, EMA, RSI, MACD, Bollinger Bands, ATR, Stochastic, VWAP) from live OHLCV data. Uses public API — no credentials required. Returns the last 5 values of each indicator."
 }
 
 func (t *CalculateIndicatorsTool) Parameters() map[string]any {

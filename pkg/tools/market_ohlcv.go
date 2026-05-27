@@ -29,7 +29,7 @@ func NewGetOHLCVTool(cfg *config.Config) *GetOHLCVTool {
 func (t *GetOHLCVTool) Name() string { return NameGetOHLCV }
 
 func (t *GetOHLCVTool) Description() string {
-	return "Fetch OHLCV (Open, High, Low, Close, Volume) candlestick data for a trading pair. Supports timeframes: 1m, 5m, 15m, 1h, 4h, 1d, 1w. Limit is capped at 500 bars."
+	return "Fetch OHLCV (Open, High, Low, Close, Volume) candlestick data for a trading pair. Uses public API — no credentials required. Supports timeframes: 1m, 5m, 15m, 1h, 4h, 1d, 1w. Limit is capped at 500 bars."
 }
 
 func (t *GetOHLCVTool) Parameters() map[string]any {

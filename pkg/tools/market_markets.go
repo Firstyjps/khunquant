@@ -21,7 +21,7 @@ func NewGetMarketsTool(cfg *config.Config) *GetMarketsTool {
 func (t *GetMarketsTool) Name() string { return NameGetMarkets }
 
 func (t *GetMarketsTool) Description() string {
-	return "Load and list the trading markets available on a provider. Supports optional filters: base currency, quote currency, and market type. Returns symbol, base, quote, and type."
+	return "Load and list the trading markets available on a provider. Uses public API — no credentials required. Supports optional filters: base currency, quote currency, and market type. Returns symbol, base, quote, and type."
 }
 
 func (t *GetMarketsTool) Parameters() map[string]any {

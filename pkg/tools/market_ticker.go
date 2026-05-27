@@ -20,7 +20,7 @@ func NewGetTickerTool(cfg *config.Config) *GetTickerTool {
 func (t *GetTickerTool) Name() string { return NameGetTicker }
 
 func (t *GetTickerTool) Description() string {
-	return "Fetch the latest ticker (last price, bid, ask, volume, 24h change) for a single trading pair on a configured broker/exchange. Use list_portfolios to discover available provider names."
+	return "Fetch the latest ticker (last price, bid, ask, volume, 24h change) for a single trading pair. Uses public API — no credentials required. Use list_portfolios to discover available provider names."
 }
 
 func (t *GetTickerTool) Parameters() map[string]any {

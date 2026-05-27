@@ -23,7 +23,7 @@ func NewGetTickersTool(cfg *config.Config) *GetTickersTool {
 func (t *GetTickersTool) Name() string { return NameGetTickers }
 
 func (t *GetTickersTool) Description() string {
-	return "Fetch latest tickers for multiple trading pairs at once (max 20 symbols). Returns last price, bid, ask, and 24h change for each symbol."
+	return "Fetch latest tickers for multiple trading pairs at once (max 20 symbols). Uses public API — no credentials required. Returns last price, bid, ask, and 24h change for each symbol."
 }
 
 func (t *GetTickersTool) Parameters() map[string]any {

@@ -22,7 +22,7 @@ func NewMarketAnalysisTool(cfg *config.Config) *MarketAnalysisTool {
 func (t *MarketAnalysisTool) Name() string { return NameMarketAnalysis }
 
 func (t *MarketAnalysisTool) Description() string {
-	return "Produce a structured market analysis for a trading pair: current price, 24h stats, trend signals (SMA, EMA crossover, RSI, MACD, Bollinger Bands). Ideal for feeding into AI decision-making."
+	return "Produce a structured market analysis for a trading pair: current price, 24h stats, trend signals (SMA, EMA crossover, RSI, MACD, Bollinger Bands). Uses public API — no credentials required. Ideal for feeding into AI decision-making."
 }
 
 func (t *MarketAnalysisTool) Parameters() map[string]any {

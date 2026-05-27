@@ -118,6 +118,7 @@ Retrieve futures order details by ID.
 
 ### futures_get_funding
 Check current funding rate and optionally account funding-fee history.
+**Public API — no credentials required for the current rate.** Only `include_history=true` needs an authenticated account.
 - `provider`, `account`, `symbol`
 - `include_history`: true to include paid/received funding fees
 - `since`: optional history start (`30d`, `2026-01-01`, ISO 8601)
@@ -139,7 +140,7 @@ Always follow this sequence for futures operations:
 ### futures_validate_market
 Load market metadata and confirm a symbol is a tradeable active linear swap.
 Returns contract size, min amount, min cost, leverage min/max, and settlement currency.
-Read-only — no `allow_leverage` required.
+**Public API — no credentials required.** Read-only, no `allow_leverage` needed.
 - `provider`, `account` (optional), `symbol`
 
 ### futures_risk_summary

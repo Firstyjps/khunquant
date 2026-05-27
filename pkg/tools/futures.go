@@ -432,8 +432,10 @@ type FuturesGetFundingTool struct{ cfg *config.Config }
 func NewFuturesGetFundingTool(cfg *config.Config) *FuturesGetFundingTool {
 	return &FuturesGetFundingTool{cfg: cfg}
 }
-func (t *FuturesGetFundingTool) Name() string        { return NameFuturesGetFunding }
-func (t *FuturesGetFundingTool) Description() string { return DescFuturesGetFunding }
+func (t *FuturesGetFundingTool) Name() string { return NameFuturesGetFunding }
+func (t *FuturesGetFundingTool) Description() string {
+	return DescFuturesGetFunding
+}
 func (t *FuturesGetFundingTool) Parameters() map[string]any {
 	return map[string]any{
 		"type": "object",

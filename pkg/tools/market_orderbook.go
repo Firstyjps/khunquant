@@ -23,7 +23,7 @@ func NewGetOrderBookTool(cfg *config.Config) *GetOrderBookTool {
 func (t *GetOrderBookTool) Name() string { return NameGetOrderBook }
 
 func (t *GetOrderBookTool) Description() string {
-	return "Fetch the current order book (bids and asks) for a trading pair. Default depth is 10, max 50."
+	return "Fetch the current order book (bids and asks) for a trading pair. Uses public API — no credentials required. Default depth is 10, max 50."
 }
 
 func (t *GetOrderBookTool) Parameters() map[string]any {

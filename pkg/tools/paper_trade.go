@@ -23,7 +23,7 @@ func NewPaperTradeTool(cfg *config.Config) *PaperTradeTool {
 func (t *PaperTradeTool) Name() string { return NamePaperTrade }
 
 func (t *PaperTradeTool) Description() string {
-	return "Simulate an order using the current live market price, without actually placing it. Useful for testing strategies risk-free. Returns a hypothetical fill summary."
+	return "Simulate an order using the current live market price, without actually placing it. Uses public API — no credentials required. Useful for testing strategies risk-free. Returns a hypothetical fill summary."
 }
 
 func (t *PaperTradeTool) Parameters() map[string]any {
