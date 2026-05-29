@@ -70,7 +70,19 @@ The PRD was slightly off; the real codebase uses the **full DCA tool-wiring patt
 | Task | Description | Files | Status | Reviewer notes | Commit |
 |------|-------------|-------|--------|----------------|--------|
 | T4.1 | `open_`/`unwind_delta_neutral_position` tools + state machine + recovery + wiring | `pkg/tools/delta_neutral_open.go`, `delta_neutral_unwind.go` (+ wiring) | ✅ | **Independently verified:** build exit 0; full pkg/tools compiles (1342 tests pass — a transient DuplicateDecl `contains` lint flag was FALSE, only one decl exists); 15 DN tests pass. Safety confirmed by reading code: both tools default `Enabled:false` (defaults.go 648-653); dry-run `confirm` gate; 5 gates (CheckLeverage/CheckPermission×2 legs/CheckDailyLoss/DefaultLimiter×2); 2nd-leg-fail→`recovery_required` + CRITICAL unhedged warning recommending unwind (open.go 210-231); 1st-leg-fail aborts 2nd. Style-only Sprintf lint logged. | `87ff425e` |
-| T4.2 | Integration tests (paper) | `pkg/deltaneutral/integration_test.go` | ✅ | **Independently verified:** 5 TestIntegration funcs (8 subtests) pass — plan→snapshot, forced breach→alert, data-unavailable escalation, exec success path, one-leg-fail→recovery (+illegal transition rejected). Reuses existing helpers (no redecl). **Final end-to-end gate: `go build ./...` clean, `go vet ./...` clean, `go test ./...` = 5178 pass / 98 pkgs.** (`make check` only blocked by missing golangci-lint binary — env gap, not code.) | _next_ |
+| T4.2 | Integration tests (paper) | `pkg/deltaneutral/integration_test.go` | ✅ | **Independently verified:** 5 TestIntegration funcs (8 subtests) pass — plan→snapshot, forced breach→alert, data-unavailable escalation, exec success path, one-leg-fail→recovery (+illegal transition rejected). Reuses existing helpers (no redecl). **Final end-to-end gate: `go build ./...` clean, `go vet ./...` clean, `go test ./...` = 5178 pass / 98 pkgs.** (`make check` only blocked by missing golangci-lint binary — env gap, not code.) | `d3dc8f5f` |
+
+## Follow-up — Leverage control + position resize (requested after base feature)
+
+Both governed by the delta-neutral invariant (matched notional). Plan: `~/.claude/plans/review-my-idea-md-and-composed-sonnet.md`. Conceptual notes: **leverage ≠ delta** (only changes margin/liq distance → re-validate liquidation); **resize = the real delta-matching path** (both legs equal notional; partial fail → recovery_required). Prerequisite bug: create never set Spot/FuturesNotionalUSDT (legs not actually sized neutral) — F1 fixes it.
+
+| Task | Description | Files | Status | Reviewer notes | Commit |
+|------|-------------|-------|--------|----------------|--------|
+| F1 | Correct sizing at create (equal notional N=(cap−reserve)·L/(L+1)) + leverage≤MaxLeverage validation | `pkg/tools/delta_neutral_create_plan.go`, `delta_neutral_tools_test.go` | 🟡 | dispatched to Sonnet | |
+| F2 | Apply leverage on open (SetFuturesLeverage) + real spot qty from live price | `pkg/tools/delta_neutral_open.go` | ⬜ | | |
+| F3 | Edit leverage via update tool (draft: stored; active: live-apply + liq re-validate) | `pkg/tools/delta_neutral_update_plan.go` | ⬜ | | |
+| F4 | New `resize_delta_neutral_position` tool (±equal notional both legs; partial-fail→recovery) + full wiring | `pkg/tools/delta_neutral_resize.go` (+ names/config/defaults/tools.go/helpers.go) | ⬜ | | |
+| F5 | Skill docs (leverage + resize) + integration tests | `workspace/skills/delta-neutral/SKILL.md`, `pkg/*` tests | ⬜ | | |
 
 ---
 
