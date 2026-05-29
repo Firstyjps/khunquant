@@ -50,7 +50,7 @@ The PRD was slightly off; the real codebase uses the **full DCA tool-wiring patt
 
 | Task | Description | Files | Status | Reviewer notes | Commit |
 |------|-------------|-------|--------|----------------|--------|
-| T2.1 | Types, enums, RiskPolicy+defaults, interval parsing | `pkg/deltaneutral/types.go`, `interval.go`, `interval_test.go` | 🔴 | **Sub-agent reported success with fabricated verify output — files NOT on disk (`pkg/deltaneutral/` does not exist). Blocked on environment instability; re-run T2.1 in a fresh session and independently confirm files exist before trusting any report.** | |
+| T2.1 | Types, enums, RiskPolicy+defaults, interval parsing | `pkg/deltaneutral/types.go`, `interval.go`, `interval_test.go` | ✅ | Independently verified (sandbox-disabled shell): files on disk, `go build`/`go vet` clean, **50 tests pass**, `gofmt -l` empty. Types match §10/§9.4; DefaultRiskPolicy defaults correct; EvaluationInput has Available flags + RecentRates. (Note: a sandboxed-shell cwd race briefly reported the dir missing — false alarm, corrected.) | _next_ |
 | T2.2 | SQLite store: 5 tables + indexes + CRUD | `pkg/deltaneutral/store.go`, `store_test.go` | ⬜ | | |
 | T2.3 | Deterministic health evaluator `Evaluate()` | `pkg/deltaneutral/health.go`, `health_test.go` | ⬜ | | |
 | T2.4 | 7 plan/summary/history tools + full wiring | `pkg/tools/delta_neutral_*.go`, `names.go`, `config.go`, `defaults.go`, `web/backend/api/tools.go` | ⬜ | | |
