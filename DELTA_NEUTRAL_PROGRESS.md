@@ -93,7 +93,7 @@ One convenience tool so the agent answers "scan arbitrage on TOP 300 pairs" in o
 
 | Task | Description | Files | Status | Reviewer notes | Commit |
 |------|-------------|-------|--------|----------------|--------|
-| S1 | Batch funding wrapper `FetchFuturesFundingRates([]symbols)→map` on FuturesProvider + 2 adapters + 2 mocks | `pkg/providers/broker/provider.go`, `binance/broker_adapter.go`, `okx/broker_adapter.go`, `mock_test.go`, `futures_coverage_test.go` | 🟡 | dispatched to Sonnet | |
+| S1 | Batch funding wrapper `FetchFuturesFundingRates([]symbols)→map` on FuturesProvider + 2 adapters + 3 mocks | `provider.go`, `binance/broker_adapter.go`, `okx/broker_adapter.go`, `mock_test.go`, `futures_coverage_test.go`, `delta_neutral_execution_test.go` | ✅ | **Independently verified:** build exit 0; all 5 FuturesProvider implementers have the batch method (sub-agent caught a 3rd mock in delta_neutral_execution_test.go I'd missed); both adapters use catchPanic + WithFetchFundingRatesSymbols + res.FundingRates, nil-safe maps; provider/exchanges/tools tests pass; gofmt clean. | _next_ |
 | S2 | `scan_delta_neutral_opportunities` tool (CMC TOP-N → batch funding rank → top-K stability) + full 5-point wiring (default Enabled:true) | `pkg/tools/scan_delta_neutral.go` (+ names/config/defaults/tools.go/instance.go) | ⬜ | | |
 | S3 | Skill doc for the scanner (broad screen vs per-symbol drill-down) | `workspace/skills/delta-neutral/SKILL.md` | ⬜ | | |
 

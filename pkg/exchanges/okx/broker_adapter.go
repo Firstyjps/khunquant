@@ -311,6 +311,26 @@ func (a *OKXBrokerAdapter) FetchFuturesFundingRate(_ context.Context, symbol str
 	return
 }
 
+func (a *OKXBrokerAdapter) FetchFuturesFundingRates(_ context.Context, symbols []string) (map[string]ccxt.FundingRate, error) {
+	var out map[string]ccxt.FundingRate
+	err := catchPanic(func() error {
+		var opts []ccxt.FetchFundingRatesOptions
+		if len(symbols) > 0 {
+			opts = append(opts, ccxt.WithFetchFundingRatesSymbols(symbols))
+		}
+		res, e := a.client.FetchFundingRates(opts...)
+		if e != nil {
+			return e
+		}
+		out = res.FundingRates
+		return nil
+	})
+	if out == nil {
+		out = map[string]ccxt.FundingRate{}
+	}
+	return out, err
+}
+
 func (a *OKXBrokerAdapter) FetchFuturesFundingHistory(_ context.Context, symbol string, since *int64, limit int) (history []ccxt.FundingHistory, err error) {
 	opts := []ccxt.FetchFundingHistoryOptions{}
 	if symbol != "" {

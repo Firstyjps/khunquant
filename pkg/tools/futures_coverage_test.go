@@ -14,17 +14,18 @@ import (
 
 // mockFuturesProvider is a minimal broker.FuturesProvider for unit tests.
 type mockFuturesProvider struct {
-	markPriceFn                       func(ctx context.Context, symbol string) (float64, error)
-	fundingRateFn                     func(ctx context.Context, symbol string) (ccxt.FundingRate, error)
-	loadMarketsFn                     func(ctx context.Context) (map[string]ccxt.MarketInterface, error)
-	fetchFuturesOrderFn               func(ctx context.Context, id, symbol string) (ccxt.Order, error)
-	fetchFuturesPositionsFn           func(ctx context.Context, symbols []string) ([]ccxt.Position, error)
-	fetchFundingHistoryFn             func(ctx context.Context, symbol string, since *int64, limit int) ([]ccxt.FundingHistory, error)
-	fetchPublicFundingRateHistoryFn   func(ctx context.Context, symbol string, since *int64, limit int) ([]ccxt.FundingRateHistory, error)
+	markPriceFn                     func(ctx context.Context, symbol string) (float64, error)
+	fundingRateFn                   func(ctx context.Context, symbol string) (ccxt.FundingRate, error)
+	fundingRatesFn                  func(ctx context.Context, symbols []string) (map[string]ccxt.FundingRate, error)
+	loadMarketsFn                   func(ctx context.Context) (map[string]ccxt.MarketInterface, error)
+	fetchFuturesOrderFn             func(ctx context.Context, id, symbol string) (ccxt.Order, error)
+	fetchFuturesPositionsFn         func(ctx context.Context, symbols []string) ([]ccxt.Position, error)
+	fetchFundingHistoryFn           func(ctx context.Context, symbol string, since *int64, limit int) ([]ccxt.FundingHistory, error)
+	fetchPublicFundingRateHistoryFn func(ctx context.Context, symbol string, since *int64, limit int) ([]ccxt.FundingRateHistory, error)
 }
 
-func (m *mockFuturesProvider) ID() string                          { return "mock" }
-func (m *mockFuturesProvider) Category() broker.AssetCategory     { return broker.CategoryCrypto }
+func (m *mockFuturesProvider) ID() string                     { return "mock" }
+func (m *mockFuturesProvider) Category() broker.AssetCategory { return broker.CategoryCrypto }
 func (m *mockFuturesProvider) GetMarketStatus(_ context.Context, _ string) (broker.MarketStatus, error) {
 	return broker.MarketOpen, nil
 }
@@ -39,6 +40,12 @@ func (m *mockFuturesProvider) FetchFuturesFundingRate(ctx context.Context, symbo
 		return m.fundingRateFn(ctx, symbol)
 	}
 	return ccxt.FundingRate{}, errors.New("not implemented")
+}
+func (m *mockFuturesProvider) FetchFuturesFundingRates(ctx context.Context, symbols []string) (map[string]ccxt.FundingRate, error) {
+	if m.fundingRatesFn != nil {
+		return m.fundingRatesFn(ctx, symbols)
+	}
+	return map[string]ccxt.FundingRate{}, nil
 }
 func (m *mockFuturesProvider) LoadFuturesMarkets(ctx context.Context) (map[string]ccxt.MarketInterface, error) {
 	if m.loadMarketsFn != nil {
@@ -560,8 +567,8 @@ func TestFuturesReducePosition_MissingSymbol(t *testing.T) {
 
 // --- tests for 0%-covered futures helper functions ---
 
-func boolPtr(b bool) *bool     { return &b }
-func strPtr2(s string) *string { return &s }
+func boolPtr(b bool) *bool      { return &b }
+func strPtr2(s string) *string  { return &s }
 func f64Ptr(f float64) *float64 { return &f }
 
 func TestEstimateFuturesNotional_ExplicitPrice(t *testing.T) {
@@ -813,8 +820,8 @@ func TestVerifyFuturesFill_NilFilledAndStatus(t *testing.T) {
 // unlimitedLimiter always allows orders (for tests that check post-rate-limit paths).
 type unlimitedLimiter struct{}
 
-func (unlimitedLimiter) Allow(_ string) bool                         { return true }
-func (unlimitedLimiter) Status() map[string]broker.RateLimitStatus  { return nil }
+func (unlimitedLimiter) Allow(_ string) bool                       { return true }
+func (unlimitedLimiter) Status() map[string]broker.RateLimitStatus { return nil }
 
 func injectMockFuturesProvider(mp *mockFuturesProvider) func() {
 	origFn := futuresProviderFn
@@ -1161,11 +1168,11 @@ func TestFuturesModifyProtection_DryRun_WithMock(t *testing.T) {
 	cfg.TradingRisk.AllowLeverage = true
 	tool := NewFuturesModifyProtectionTool(cfg)
 	res := tool.Execute(context.Background(), map[string]any{
-		"provider":   "binance",
-		"symbol":     "BTC/USDT:USDT",
-		"stop_loss":  40000.0,
+		"provider":    "binance",
+		"symbol":      "BTC/USDT:USDT",
+		"stop_loss":   40000.0,
 		"take_profit": 60000.0,
-		"confirm":    false,
+		"confirm":     false,
 	})
 	if res.IsError {
 		t.Errorf("unexpected error: %s", res.ForLLM)

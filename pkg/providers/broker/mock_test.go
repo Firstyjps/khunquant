@@ -32,17 +32,18 @@ type MockProvider struct {
 	TransferFn          func(asset string, amount float64, fromAccount, toAccount string) (ccxt.TransferEntry, error)
 
 	// broker.FuturesProvider
-	SetFuturesLeverageFn      func(symbol string, leverage int64, marginMode, positionSide string) (map[string]interface{}, error)
-	CreateFuturesOrderFn      func(req broker.FuturesOrderRequest) (ccxt.Order, error)
-	FetchFuturesOrderFn       func(id, symbol string) (ccxt.Order, error)
-	FetchFuturesOpenOrdersFn  func(symbol string) ([]ccxt.Order, error)
-	FetchFuturesPositionsFn   func(symbols []string) ([]ccxt.Position, error)
-	FetchFuturesFundingRateFn func(symbol string) (ccxt.FundingRate, error)
-	FetchFuturesFundingHistFn func(symbol string, since *int64, limit int) ([]ccxt.FundingHistory, error)
-	LoadFuturesMarketsFn      func() (map[string]ccxt.MarketInterface, error)
-	FetchFuturesMarkPriceFn   func(symbol string) (float64, error)
-	CancelFuturesOrderFn      func(id, symbol string) (ccxt.Order, error)
-	CancelAllFuturesOrdersFn  func(symbol string) ([]ccxt.Order, error)
+	SetFuturesLeverageFn       func(symbol string, leverage int64, marginMode, positionSide string) (map[string]interface{}, error)
+	CreateFuturesOrderFn       func(req broker.FuturesOrderRequest) (ccxt.Order, error)
+	FetchFuturesOrderFn        func(id, symbol string) (ccxt.Order, error)
+	FetchFuturesOpenOrdersFn   func(symbol string) ([]ccxt.Order, error)
+	FetchFuturesPositionsFn    func(symbols []string) ([]ccxt.Position, error)
+	FetchFuturesFundingRateFn  func(symbol string) (ccxt.FundingRate, error)
+	FetchFuturesFundingRatesFn func(symbols []string) (map[string]ccxt.FundingRate, error)
+	FetchFuturesFundingHistFn  func(symbol string, since *int64, limit int) ([]ccxt.FundingHistory, error)
+	LoadFuturesMarketsFn       func() (map[string]ccxt.MarketInterface, error)
+	FetchFuturesMarkPriceFn    func(symbol string) (float64, error)
+	CancelFuturesOrderFn       func(id, symbol string) (ccxt.Order, error)
+	CancelAllFuturesOrdersFn   func(symbol string) ([]ccxt.Order, error)
 }
 
 func NewMockProvider(id string) *MockProvider {
@@ -199,6 +200,12 @@ func (m *MockProvider) FetchFuturesFundingRate(_ context.Context, symbol string)
 		return m.FetchFuturesFundingRateFn(symbol)
 	}
 	return ccxt.FundingRate{}, nil
+}
+func (m *MockProvider) FetchFuturesFundingRates(_ context.Context, symbols []string) (map[string]ccxt.FundingRate, error) {
+	if m.FetchFuturesFundingRatesFn != nil {
+		return m.FetchFuturesFundingRatesFn(symbols)
+	}
+	return map[string]ccxt.FundingRate{}, nil
 }
 func (m *MockProvider) FetchFuturesFundingHistory(_ context.Context, symbol string, since *int64, limit int) ([]ccxt.FundingHistory, error) {
 	if m.FetchFuturesFundingHistFn != nil {

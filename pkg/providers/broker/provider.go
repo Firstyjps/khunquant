@@ -150,6 +150,7 @@ type FuturesProvider interface {
 	FetchFuturesOpenOrders(ctx context.Context, symbol string) ([]ccxt.Order, error)
 	FetchFuturesPositions(ctx context.Context, symbols []string) ([]ccxt.Position, error)
 	FetchFuturesFundingRate(ctx context.Context, symbol string) (ccxt.FundingRate, error)
+	FetchFuturesFundingRates(ctx context.Context, symbols []string) (map[string]ccxt.FundingRate, error)
 	FetchFuturesFundingHistory(ctx context.Context, symbol string, since *int64, limit int) ([]ccxt.FundingHistory, error)
 	FetchPublicFundingRateHistory(ctx context.Context, symbol string, since *int64, limit int) ([]ccxt.FundingRateHistory, error)
 	LoadFuturesMarkets(ctx context.Context) (map[string]ccxt.MarketInterface, error)
