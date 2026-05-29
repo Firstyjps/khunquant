@@ -436,6 +436,50 @@ var toolCatalog = []toolCatalogEntry{
 		ConfigKey:   tools.NameGetDCASummary,
 	},
 
+	// Delta-Neutral (Track G)
+	{
+		Name:        tools.NameCreateDeltaNeutralPlan,
+		Description: tools.DescCreateDeltaNeutralPlan,
+		Category:    tools.CatDeltaNeutral,
+		ConfigKey:   tools.NameCreateDeltaNeutralPlan,
+	},
+	{
+		Name:        tools.NameListDeltaNeutralPlans,
+		Description: tools.DescListDeltaNeutralPlans,
+		Category:    tools.CatDeltaNeutral,
+		ConfigKey:   tools.NameListDeltaNeutralPlans,
+	},
+	{
+		Name:        tools.NameGetDeltaNeutralPlan,
+		Description: tools.DescGetDeltaNeutralPlan,
+		Category:    tools.CatDeltaNeutral,
+		ConfigKey:   tools.NameGetDeltaNeutralPlan,
+	},
+	{
+		Name:        tools.NameUpdateDeltaNeutralPlan,
+		Description: tools.DescUpdateDeltaNeutralPlan,
+		Category:    tools.CatDeltaNeutral,
+		ConfigKey:   tools.NameUpdateDeltaNeutralPlan,
+	},
+	{
+		Name:        tools.NameDeleteDeltaNeutralPlan,
+		Description: tools.DescDeleteDeltaNeutralPlan,
+		Category:    tools.CatDeltaNeutral,
+		ConfigKey:   tools.NameDeleteDeltaNeutralPlan,
+	},
+	{
+		Name:        tools.NameGetDeltaNeutralSummary,
+		Description: tools.DescGetDeltaNeutralSummary,
+		Category:    tools.CatDeltaNeutral,
+		ConfigKey:   tools.NameGetDeltaNeutralSummary,
+	},
+	{
+		Name:        tools.NameGetDeltaNeutralHistory,
+		Description: tools.DescGetDeltaNeutralHistory,
+		Category:    tools.CatDeltaNeutral,
+		ConfigKey:   tools.NameGetDeltaNeutralHistory,
+	},
+
 	// PnL — Profit and Loss (Track F)
 	{
 		Name:        tools.NameGetPnLSummary,
@@ -695,6 +739,20 @@ func applyToolState(cfg *config.Config, toolName string, enabled bool) error {
 		cfg.Tools.GetDCAHistory.Enabled = enabled
 	case tools.NameGetDCASummary:
 		cfg.Tools.GetDCASummary.Enabled = enabled
+	case tools.NameCreateDeltaNeutralPlan:
+		cfg.Tools.CreateDeltaNeutralPlan.Enabled = enabled
+	case tools.NameListDeltaNeutralPlans:
+		cfg.Tools.ListDeltaNeutralPlans.Enabled = enabled
+	case tools.NameGetDeltaNeutralPlan:
+		cfg.Tools.GetDeltaNeutralPlan.Enabled = enabled
+	case tools.NameUpdateDeltaNeutralPlan:
+		cfg.Tools.UpdateDeltaNeutralPlan.Enabled = enabled
+	case tools.NameDeleteDeltaNeutralPlan:
+		cfg.Tools.DeleteDeltaNeutralPlan.Enabled = enabled
+	case tools.NameGetDeltaNeutralSummary:
+		cfg.Tools.GetDeltaNeutralSummary.Enabled = enabled
+	case tools.NameGetDeltaNeutralHistory:
+		cfg.Tools.GetDeltaNeutralHistory.Enabled = enabled
 	case tools.NameGetPnLSummary:
 		cfg.Tools.GetPnLSummary.Enabled = enabled
 	case tools.NameGetPnLDetail:

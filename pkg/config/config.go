@@ -1038,19 +1038,19 @@ type ToolsConfig struct {
 	GetOrderRateStatus ToolConfig `json:"get_order_rate_status" envPrefix:"KHUNQUANT_TOOLS_GET_ORDER_RATE_STATUS_"`
 
 	// Futures / perpetual swaps (Track B2)
-	FuturesSetLeverage       ToolConfig `json:"futures_set_leverage"       envPrefix:"KHUNQUANT_TOOLS_FUTURES_SET_LEVERAGE_"`
-	FuturesOpenPosition      ToolConfig `json:"futures_open_position"      envPrefix:"KHUNQUANT_TOOLS_FUTURES_OPEN_POSITION_"`
-	FuturesGetOrder          ToolConfig `json:"futures_get_order"          envPrefix:"KHUNQUANT_TOOLS_FUTURES_GET_ORDER_"`
-	FuturesGetPositions      ToolConfig `json:"futures_get_positions"      envPrefix:"KHUNQUANT_TOOLS_FUTURES_GET_POSITIONS_"`
-	FuturesGetFunding        ToolConfig `json:"futures_get_funding"        envPrefix:"KHUNQUANT_TOOLS_FUTURES_GET_FUNDING_"`
-	FuturesValidateMarket    ToolConfig `json:"futures_validate_market"    envPrefix:"KHUNQUANT_TOOLS_FUTURES_VALIDATE_MARKET_"`
-	FuturesRiskSummary       ToolConfig `json:"futures_risk_summary"       envPrefix:"KHUNQUANT_TOOLS_FUTURES_RISK_SUMMARY_"`
+	FuturesSetLeverage        ToolConfig `json:"futures_set_leverage"       envPrefix:"KHUNQUANT_TOOLS_FUTURES_SET_LEVERAGE_"`
+	FuturesOpenPosition       ToolConfig `json:"futures_open_position"      envPrefix:"KHUNQUANT_TOOLS_FUTURES_OPEN_POSITION_"`
+	FuturesGetOrder           ToolConfig `json:"futures_get_order"          envPrefix:"KHUNQUANT_TOOLS_FUTURES_GET_ORDER_"`
+	FuturesGetPositions       ToolConfig `json:"futures_get_positions"      envPrefix:"KHUNQUANT_TOOLS_FUTURES_GET_POSITIONS_"`
+	FuturesGetFunding         ToolConfig `json:"futures_get_funding"        envPrefix:"KHUNQUANT_TOOLS_FUTURES_GET_FUNDING_"`
+	FuturesValidateMarket     ToolConfig `json:"futures_validate_market"    envPrefix:"KHUNQUANT_TOOLS_FUTURES_VALIDATE_MARKET_"`
+	FuturesRiskSummary        ToolConfig `json:"futures_risk_summary"       envPrefix:"KHUNQUANT_TOOLS_FUTURES_RISK_SUMMARY_"`
 	FuturesEstimateFundingFee ToolConfig `json:"futures_estimate_funding_fee" envPrefix:"KHUNQUANT_TOOLS_FUTURES_ESTIMATE_FUNDING_FEE_"`
-	FuturesClosePosition     ToolConfig `json:"futures_close_position"     envPrefix:"KHUNQUANT_TOOLS_FUTURES_CLOSE_POSITION_"`
-	FuturesReducePosition    ToolConfig `json:"futures_reduce_position"    envPrefix:"KHUNQUANT_TOOLS_FUTURES_REDUCE_POSITION_"`
-	FuturesModifyProtection  ToolConfig `json:"futures_modify_protection"  envPrefix:"KHUNQUANT_TOOLS_FUTURES_MODIFY_PROTECTION_"`
-	FuturesCancelOrders      ToolConfig `json:"futures_cancel_orders"      envPrefix:"KHUNQUANT_TOOLS_FUTURES_CANCEL_ORDERS_"`
-	FuturesEmergencyFlatten  ToolConfig `json:"futures_emergency_flatten"  envPrefix:"KHUNQUANT_TOOLS_FUTURES_EMERGENCY_FLATTEN_"`
+	FuturesClosePosition      ToolConfig `json:"futures_close_position"     envPrefix:"KHUNQUANT_TOOLS_FUTURES_CLOSE_POSITION_"`
+	FuturesReducePosition     ToolConfig `json:"futures_reduce_position"    envPrefix:"KHUNQUANT_TOOLS_FUTURES_REDUCE_POSITION_"`
+	FuturesModifyProtection   ToolConfig `json:"futures_modify_protection"  envPrefix:"KHUNQUANT_TOOLS_FUTURES_MODIFY_PROTECTION_"`
+	FuturesCancelOrders       ToolConfig `json:"futures_cancel_orders"      envPrefix:"KHUNQUANT_TOOLS_FUTURES_CANCEL_ORDERS_"`
+	FuturesEmergencyFlatten   ToolConfig `json:"futures_emergency_flatten"  envPrefix:"KHUNQUANT_TOOLS_FUTURES_EMERGENCY_FLATTEN_"`
 
 	// Technical analysis tools (Track C)
 	CalculateIndicators ToolConfig `json:"calculate_indicators" envPrefix:"KHUNQUANT_TOOLS_CALCULATE_INDICATORS_"`
@@ -1070,6 +1070,15 @@ type ToolsConfig struct {
 	ExecuteDCAOrder ToolConfig `json:"execute_dca_order" envPrefix:"KHUNQUANT_TOOLS_EXECUTE_DCA_ORDER_"`
 	GetDCAHistory   ToolConfig `json:"get_dca_history"   envPrefix:"KHUNQUANT_TOOLS_GET_DCA_HISTORY_"`
 	GetDCASummary   ToolConfig `json:"get_dca_summary"   envPrefix:"KHUNQUANT_TOOLS_GET_DCA_SUMMARY_"`
+
+	// Delta-Neutral (Track G)
+	CreateDeltaNeutralPlan ToolConfig `json:"create_delta_neutral_plan"  envPrefix:"KHUNQUANT_TOOLS_CREATE_DELTA_NEUTRAL_PLAN_"`
+	ListDeltaNeutralPlans  ToolConfig `json:"list_delta_neutral_plans"   envPrefix:"KHUNQUANT_TOOLS_LIST_DELTA_NEUTRAL_PLANS_"`
+	GetDeltaNeutralPlan    ToolConfig `json:"get_delta_neutral_plan"     envPrefix:"KHUNQUANT_TOOLS_GET_DELTA_NEUTRAL_PLAN_"`
+	UpdateDeltaNeutralPlan ToolConfig `json:"update_delta_neutral_plan"  envPrefix:"KHUNQUANT_TOOLS_UPDATE_DELTA_NEUTRAL_PLAN_"`
+	DeleteDeltaNeutralPlan ToolConfig `json:"delete_delta_neutral_plan"  envPrefix:"KHUNQUANT_TOOLS_DELETE_DELTA_NEUTRAL_PLAN_"`
+	GetDeltaNeutralSummary ToolConfig `json:"get_delta_neutral_summary"  envPrefix:"KHUNQUANT_TOOLS_GET_DELTA_NEUTRAL_SUMMARY_"`
+	GetDeltaNeutralHistory ToolConfig `json:"get_delta_neutral_history"  envPrefix:"KHUNQUANT_TOOLS_GET_DELTA_NEUTRAL_HISTORY_"`
 
 	// PnL — Profit and Loss (Track F)
 	GetPnLSummary ToolConfig `json:"get_pnl_summary" envPrefix:"KHUNQUANT_TOOLS_GET_PNL_SUMMARY_"`
@@ -1570,6 +1579,20 @@ func (t *ToolsConfig) IsToolEnabled(name string) bool {
 		return t.GetDCAHistory.Enabled
 	case "get_dca_summary":
 		return t.GetDCASummary.Enabled
+	case "create_delta_neutral_plan":
+		return t.CreateDeltaNeutralPlan.Enabled
+	case "list_delta_neutral_plans":
+		return t.ListDeltaNeutralPlans.Enabled
+	case "get_delta_neutral_plan":
+		return t.GetDeltaNeutralPlan.Enabled
+	case "update_delta_neutral_plan":
+		return t.UpdateDeltaNeutralPlan.Enabled
+	case "delete_delta_neutral_plan":
+		return t.DeleteDeltaNeutralPlan.Enabled
+	case "get_delta_neutral_summary":
+		return t.GetDeltaNeutralSummary.Enabled
+	case "get_delta_neutral_history":
+		return t.GetDeltaNeutralHistory.Enabled
 	case "get_pnl_summary":
 		return t.GetPnLSummary.Enabled
 	case "get_pnl_detail":

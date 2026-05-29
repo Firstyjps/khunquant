@@ -623,6 +623,29 @@ func DefaultConfig() *Config {
 				Enabled: true,
 			},
 
+			// Delta-Neutral (Track G)
+			CreateDeltaNeutralPlan: ToolConfig{
+				Enabled: true,
+			},
+			ListDeltaNeutralPlans: ToolConfig{
+				Enabled: true,
+			},
+			GetDeltaNeutralPlan: ToolConfig{
+				Enabled: true,
+			},
+			UpdateDeltaNeutralPlan: ToolConfig{
+				Enabled: true,
+			},
+			DeleteDeltaNeutralPlan: ToolConfig{
+				Enabled: true,
+			},
+			GetDeltaNeutralSummary: ToolConfig{
+				Enabled: true,
+			},
+			GetDeltaNeutralHistory: ToolConfig{
+				Enabled: true,
+			},
+
 			// PnL — Profit and Loss (Track F)
 			GetPnLSummary: ToolConfig{
 				Enabled: true,
