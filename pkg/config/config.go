@@ -1079,6 +1079,8 @@ type ToolsConfig struct {
 	DeleteDeltaNeutralPlan ToolConfig `json:"delete_delta_neutral_plan"  envPrefix:"KHUNQUANT_TOOLS_DELETE_DELTA_NEUTRAL_PLAN_"`
 	GetDeltaNeutralSummary ToolConfig `json:"get_delta_neutral_summary"  envPrefix:"KHUNQUANT_TOOLS_GET_DELTA_NEUTRAL_SUMMARY_"`
 	GetDeltaNeutralHistory ToolConfig `json:"get_delta_neutral_history"  envPrefix:"KHUNQUANT_TOOLS_GET_DELTA_NEUTRAL_HISTORY_"`
+	OpenDeltaNeutralPosition ToolConfig `json:"open_delta_neutral_position" envPrefix:"KHUNQUANT_TOOLS_OPEN_DELTA_NEUTRAL_POSITION_"`
+	UnwindDeltaNeutralPosition ToolConfig `json:"unwind_delta_neutral_position" envPrefix:"KHUNQUANT_TOOLS_UNWIND_DELTA_NEUTRAL_POSITION_"`
 
 	// PnL — Profit and Loss (Track F)
 	GetPnLSummary ToolConfig `json:"get_pnl_summary" envPrefix:"KHUNQUANT_TOOLS_GET_PNL_SUMMARY_"`
@@ -1593,6 +1595,10 @@ func (t *ToolsConfig) IsToolEnabled(name string) bool {
 		return t.GetDeltaNeutralSummary.Enabled
 	case "get_delta_neutral_history":
 		return t.GetDeltaNeutralHistory.Enabled
+	case "open_delta_neutral_position":
+		return t.OpenDeltaNeutralPosition.Enabled
+	case "unwind_delta_neutral_position":
+		return t.UnwindDeltaNeutralPosition.Enabled
 	case "get_pnl_summary":
 		return t.GetPnLSummary.Enabled
 	case "get_pnl_detail":

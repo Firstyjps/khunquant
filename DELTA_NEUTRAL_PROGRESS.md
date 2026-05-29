@@ -57,19 +57,19 @@ The PRD was slightly off; the real codebase uses the **full DCA tool-wiring patt
 | T2.5 | Execution state-machine model (pure) | `pkg/deltaneutral/execution.go`, `execution_test.go` | ✅ | Independently verified: 14 ExecutionState + 9 LegState + 2 LegType per §7.9; CanTransition/AllowedTransitions/IsTerminal; FirstLegType returns spot when spotLessLiquid (TestFirstLegType passes — confirmed directly after a stale-grep false alarm); no clash with store.go Execution/ExecutionLeg row structs; 33 pkg tests pass; build/vet/fmt clean. Done out of order (pure/independent) before T2.4. | `c33f30b3` |
 | T2.6 | Cron monitor handler + gateway wiring | `cmd/khunquant/internal/gateway/delta_neutral_handler.go`, `helpers.go` | ✅ | **Independently verified:** `go build ./...` exit 0; vet clean; gofmt clean; DN tests 17 pass; gateway pkg tests pass. Read handler: SaveSnapshot always (204); on breach SaveAlert(250)→PublishOutbound(263) BEFORE `cronTool != nil`(280) — **alert fires even when cronTool nil** ✓; data-unavailable flows through as a breach (never silent). helpers.go: DN store init 661-666, `dn:` dispatch 681-682, 7 tools registered gated by `dnEnabled && dnStore != nil` 738-758. | `e69d87fe` |
 
-## Phase 3 — REST + Web UI — ✅ COMPLETE — ⬜ NOT STARTED
+## Phase 3 — REST + Web UI — ✅ COMPLETE
 
 | Task | Description | Files | Status | Reviewer notes | Commit |
 |------|-------------|-------|--------|----------------|--------|
 | T3.1 | REST endpoints (5) + router + handler store wiring + tests | `web/backend/api/agent_delta_neutral.go`, `router.go` | ✅ | **Independently verified:** build exit 0; 8 DN API tests pass; 5 routes registered (126-130) + router hook (81); gofmt clean; **security: 91 explicit json DTO fields, zero secret/key/token fields** (grep confirmed). Per-request store open+defer Close, mirrors DCA. | `8fa66590` |
-| T3.2 | Frontend API module | `web/frontend/src/api/agent-delta-neutral.ts` | ✅ | **Independently verified:** `pnpm build:backend` (tsc -b && vite build) succeeds, 0 TS errors; TS interfaces match Go json tags (spot-checked health_score/cross_exchange/data_status/etc). | `_combined_` |
-| T3.3 | Delta-Neutral panel + tab + i18n | `web/frontend/src/components/agent-memory/delta-neutral-panel.tsx`, `agent-memory-page.tsx`, `i18n/locales/*.json` | ✅ | **Independently verified:** build green; tab wired (import 38, TabsTrigger 213, TabsContent 357); i18n key present+valid in en/zh/th; panel has health/cross-exchange/data-unavailable/agent-invoked badges. (No byte-size display — memory-size API has no dn field, intentionally omitted.) Frontend has no vitest; tsc build is the gate (matches DCA panel verification). | `_combined_` |
+| T3.2 | Frontend API module | `web/frontend/src/api/agent-delta-neutral.ts` | ✅ | **Independently verified:** `pnpm build:backend` (tsc -b && vite build) succeeds, 0 TS errors; TS interfaces match Go json tags (spot-checked health_score/cross_exchange/data_status/etc). | `6c861f23` |
+| T3.3 | Delta-Neutral panel + tab + i18n | `web/frontend/src/components/agent-memory/delta-neutral-panel.tsx`, `agent-memory-page.tsx`, `i18n/locales/*.json` | ✅ | **Independently verified:** build green; tab wired (import 38, TabsTrigger 213, TabsContent 357); i18n key present+valid in en/zh/th; panel has health/cross-exchange/data-unavailable/agent-invoked badges. (No byte-size display — memory-size API has no dn field, intentionally omitted.) Frontend has no vitest; tsc build is the gate (matches DCA panel verification). | `6c861f23` |
 
-## Phase 4 — Approval-mode execution (last) — ⬜ NOT STARTED
+## Phase 4 — Approval-mode execution (last)
 
 | Task | Description | Files | Status | Reviewer notes | Commit |
 |------|-------------|-------|--------|----------------|--------|
-| T4.1 | `open_`/`unwind_delta_neutral_position` tools + state machine + recovery + wiring | `pkg/tools/delta_neutral_open.go`, `delta_neutral_unwind.go` (+ wiring) | ⬜ | | |
+| T4.1 | `open_`/`unwind_delta_neutral_position` tools + state machine + recovery + wiring | `pkg/tools/delta_neutral_open.go`, `delta_neutral_unwind.go` (+ wiring) | ✅ | **Independently verified:** build exit 0; full pkg/tools compiles (1342 tests pass — a transient DuplicateDecl `contains` lint flag was FALSE, only one decl exists); 15 DN tests pass. Safety confirmed by reading code: both tools default `Enabled:false` (defaults.go 648-653); dry-run `confirm` gate; 5 gates (CheckLeverage/CheckPermission×2 legs/CheckDailyLoss/DefaultLimiter×2); 2nd-leg-fail→`recovery_required` + CRITICAL unhedged warning recommending unwind (open.go 210-231); 1st-leg-fail aborts 2nd. Style-only Sprintf lint logged. | _next_ |
 | T4.2 | Integration tests (paper) | `pkg/deltaneutral/*_integration_test.go` | ⬜ | | |
 
 ---

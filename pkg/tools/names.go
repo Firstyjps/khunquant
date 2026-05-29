@@ -96,6 +96,8 @@ const (
 	NameDeleteDeltaNeutralPlan = "delete_delta_neutral_plan"
 	NameGetDeltaNeutralSummary = "get_delta_neutral_summary"
 	NameGetDeltaNeutralHistory = "get_delta_neutral_history"
+	NameOpenDeltaNeutralPosition = "open_delta_neutral_position"
+	NameUnwindDeltaNeutralPosition = "unwind_delta_neutral_position"
 )
 
 // Category constants for the web UI tool catalog.
@@ -181,4 +183,6 @@ const (
 	DescDeleteDeltaNeutralPlan = "Delete a delta-neutral plan and cancel its cron job. Reject if the plan is active — pause first."
 	DescGetDeltaNeutralSummary = "Get the economic summary for a delta-neutral plan: latest snapshot data (health, delta, funding, margin, PnL)."
 	DescGetDeltaNeutralHistory = "Get paginated monitor snapshots and alerts for a delta-neutral plan."
+	DescOpenDeltaNeutralPosition = "Open a delta-neutral position (approval-mode two-leg execution: futures hedge + spot buy). HIGHEST-RISK: requires leverage opt-in, permission, daily-loss, rate-limit gates. Dry-run (confirm=false) shows review; confirm=true executes."
+	DescUnwindDeltaNeutralPosition = "Close a delta-neutral position (unwind both legs: reduce-only futures close + spot sell). Recovery tool for unhedged exposure or manual closure. Approval-mode: confirm=true required."
 )
