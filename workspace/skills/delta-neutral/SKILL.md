@@ -329,17 +329,21 @@ This fetches top 300 coins by CMC market cap, ranks them by APR on Binance perpe
 ```
 === Delta-Neutral Funding Carry Scan ===
 
-Rank Asset Futures         Funding%   APR%   Direction   7d Mean%   7d Std%   14d Mean%  14d Std%   Label
+Rank Asset Futures         Spot     Funding%   APR%   Direction   7d Mean%   7d Std%   14d Mean%  14d Std%   Label
 ———————————————————————————————————————————————————————————————————————————————————————————————————————————————
-1    ETH   ETH/USDT:USDT   0.008500   26.22   short perp  +0.0082    0.0015    +0.0078    0.0014    attractive
-2    BTC   BTC/USDT:USDT   0.006200   22.77   short perp  +0.0061    0.0010    +0.0059    0.0012    attractive
-3    SOL   SOL/USDT:USDT   0.005100   18.67   short perp  +0.0048    0.0025    +0.0050    0.0028    watch
-4    AVAX  AVAX/USDT:USDT  -0.000200  -0.73  long perp   -0.0002    0.0008    -0.0001    0.0006    blocked
+1    ETH   ETH/USDT:USDT   yes      0.008500   26.22   short perp  +0.0082    0.0015    +0.0078    0.0014    attractive
+2    BTC   BTC/USDT:USDT   yes      0.006200   22.77   short perp  +0.0061    0.0010    +0.0059    0.0012    attractive
+3    XYZ   XYZ/USDT:USDT   NO-SPOT  0.005400   19.71   short perp  +0.0050    0.0030    +0.0052    0.0031    watch
+4    SOL   SOL/USDT:USDT   yes      0.005100   18.67   short perp  +0.0048    0.0025    +0.0050    0.0028    watch
 ...
 
+⚠️  No spot pair on this exchange for: XYZ — funding rank is still valid, but the delta-neutral spot leg cannot be opened here (source spot elsewhere, or treat as futures-only).
+Spot column: 'yes' = spot pair available | 'no-spot' = perp only on this exchange | 'unknown' = could not verify.
 Note: Funding-only screen — drill into top picks with get_orderbook/futures_risk_summary before building a plan.
-Legend: 'attractive' = positive carry + stable | 'watch' = near-zero/unstable | 'blocked' = no perp or no funding
+Legend: 'attractive' = positive carry + stable | 'watch' = near-zero/unstable/no-spot | 'blocked' = no perp or no funding
 ```
+
+The **Spot** column flags whether the asset also has a spot pair on the chosen exchange. Assets with a perp but **no spot** are **kept** in the ranked list (so you still see correct sorted funding data) and marked `NO-SPOT` — their funding rank is real, but the delta-neutral spot leg can't be opened on that exchange (source the spot elsewhere, or treat as futures-only). `unknown` means spot markets couldn't be verified.
 
 ### After The Scan: Drill Down Before Opening
 

@@ -106,6 +106,101 @@ func TestScanDeltaNeutralOpportunities_Success(t *testing.T) {
 	}
 }
 
+// spotCapableMock embeds mockFuturesProvider and adds the MarketDataProvider
+// surface so the scanner's `fp.(broker.MarketDataProvider)` assertion succeeds
+// and the spot-availability flagging path is exercised.
+type spotCapableMock struct {
+	*mockFuturesProvider
+	spotMarketsFn func(ctx context.Context) (map[string]ccxt.MarketInterface, error)
+}
+
+func (s *spotCapableMock) LoadMarkets(ctx context.Context) (map[string]ccxt.MarketInterface, error) {
+	if s.spotMarketsFn != nil {
+		return s.spotMarketsFn(ctx)
+	}
+	return nil, nil
+}
+func (s *spotCapableMock) FetchTicker(_ context.Context, _ string) (ccxt.Ticker, error) {
+	return ccxt.Ticker{}, nil
+}
+func (s *spotCapableMock) FetchTickers(_ context.Context, _ []string) (map[string]ccxt.Ticker, error) {
+	return nil, nil
+}
+func (s *spotCapableMock) FetchOHLCV(_ context.Context, _, _ string, _ *int64, _ int) ([]ccxt.OHLCV, error) {
+	return nil, nil
+}
+func (s *spotCapableMock) FetchOrderBook(_ context.Context, _ string, _ int) (ccxt.OrderBook, error) {
+	return ccxt.OrderBook{}, nil
+}
+
+// TestScanDeltaNeutralOpportunities_SpotFlagging verifies that symbols with a
+// perp but no spot pair are KEPT in the ranked list and flagged "NO-SPOT" (not
+// filtered out), while symbols with a spot pair are flagged available.
+func TestScanDeltaNeutralOpportunities_SpotFlagging(t *testing.T) {
+	oldCMCFn := cmcListingFn
+	defer func() { cmcListingFn = oldCMCFn }()
+	cmcListingFn = func(ctx context.Context, cfg *config.Config, baseURL string, topN int) ([]string, error) {
+		return []string{"BTC", "PERPONLY"}, nil
+	}
+
+	oldFuturesFn := futuresProviderFn
+	defer func() { futuresProviderFn = oldFuturesFn }()
+
+	interval := "8h"
+	base := &mockFuturesProvider{
+		fundingRatesFn: func(ctx context.Context, symbols []string) (map[string]ccxt.FundingRate, error) {
+			fr1 := 0.0002
+			fr2 := 0.0004 // PERPONLY has the higher abs APR → ranks first
+			return map[string]ccxt.FundingRate{
+				"BTC/USDT:USDT":      {FundingRate: &fr1, Interval: &interval},
+				"PERPONLY/USDT:USDT": {FundingRate: &fr2, Interval: &interval},
+			}, nil
+		},
+		loadMarketsFn: func(ctx context.Context) (map[string]ccxt.MarketInterface, error) {
+			return nil, nil // skip futures filtering
+		},
+	}
+	yes := true
+	mock := &spotCapableMock{
+		mockFuturesProvider: base,
+		spotMarketsFn: func(ctx context.Context) (map[string]ccxt.MarketInterface, error) {
+			// BTC has a spot pair; PERPONLY does not.
+			return map[string]ccxt.MarketInterface{
+				"BTC/USDT": {Active: &yes, Spot: &yes},
+			}, nil
+		},
+	}
+	futuresProviderFn = func(ctx context.Context, cfg *config.Config, providerID, account string) (broker.FuturesProvider, error) {
+		return mock, nil
+	}
+
+	tool := NewScanDeltaNeutralOpportunitiesTool(&config.Config{})
+	result := tool.Execute(context.Background(), map[string]any{
+		"provider":          "mock",
+		"include_stability": false,
+	})
+	if result.IsError {
+		t.Fatalf("unexpected error: %v", result.ForLLM)
+	}
+	out := result.ForUser
+
+	// Both symbols must remain in the list (no filtering).
+	if !strings.Contains(out, "PERPONLY") {
+		t.Fatalf("PERPONLY (no spot) must be KEPT in the list, got:\n%s", out)
+	}
+	if !strings.Contains(out, "BTC") {
+		t.Fatalf("BTC must be present, got:\n%s", out)
+	}
+	// The no-spot symbol must be flagged.
+	if !strings.Contains(out, "NO-SPOT") {
+		t.Fatalf("expected NO-SPOT flag for PERPONLY, got:\n%s", out)
+	}
+	// The caution footer must name the no-spot asset.
+	if !strings.Contains(out, "No spot pair on this exchange for:") || !strings.Contains(out, "PERPONLY") {
+		t.Fatalf("expected caution note naming PERPONLY, got:\n%s", out)
+	}
+}
+
 func TestScanDeltaNeutralOpportunities_CMCError(t *testing.T) {
 	oldCMCFn := cmcListingFn
 	defer func() { cmcListingFn = oldCMCFn }()

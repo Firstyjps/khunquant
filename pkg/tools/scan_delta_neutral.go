@@ -15,6 +15,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/cryptoquantumwave/khunquant/pkg/config"
+	"github.com/cryptoquantumwave/khunquant/pkg/providers/broker"
 	"github.com/cryptoquantumwave/khunquant/pkg/utils"
 )
 
@@ -88,6 +89,8 @@ type opportunityRow struct {
 	rank               int
 	asset              string
 	symbol             string
+	spotSymbol         string
+	spotStatus         string // "yes", "no-spot", or "unknown"
 	fundingPercent     float64
 	apr                float64
 	direction          string
@@ -145,6 +148,15 @@ func (t *ScanDeltaNeutralOpportunitiesTool) Execute(ctx context.Context, args ma
 	}
 
 	markets, _ := fp.LoadFuturesMarkets(ctx) // Silently ignore error; we'll proceed without filtering.
+
+	// Load spot markets to flag whether each asset also has a spot pair on this
+	// exchange. We do NOT filter on this — symbols without spot stay in the ranked
+	// list with a caution flag so the user still sees correct sorted funding data.
+	// spotMarkets == nil means we couldn't determine spot availability (status "unknown").
+	var spotMarkets map[string]ccxt.MarketInterface
+	if md, ok := fp.(broker.MarketDataProvider); ok {
+		spotMarkets, _ = md.LoadMarkets(ctx) // Silently ignore error → spot status "unknown".
+	}
 
 	// Build candidate symbols and filter active/swap.
 	candidateSymbols := make([]string, 0)
@@ -210,11 +222,16 @@ func (t *ScanDeltaNeutralOpportunitiesTool) Execute(ctx context.Context, args ma
 			dir = "long perp"
 		}
 
+		spotSym := base + "/" + quote
+		spotStatus := spotStatusFor(spotMarkets, spotSym)
+
 		rankIdx := symbolToIdx[futSym]
 		row := opportunityRow{
 			rank:           rankIdx + 1,
 			asset:          base,
 			symbol:         futSym,
+			spotSymbol:     spotSym,
+			spotStatus:     spotStatus,
 			fundingPercent: fr * 100,
 			apr:            apr,
 			direction:      dir,
@@ -224,6 +241,10 @@ func (t *ScanDeltaNeutralOpportunitiesTool) Execute(ctx context.Context, args ma
 		// Label logic: positive APR + stable = attractive.
 		if apr > 0 {
 			row.label = "attractive"
+		}
+		// No spot pair on this exchange → cannot build the spot leg here; flag as watch.
+		if spotStatus == "no-spot" {
+			row.label = "watch"
 		}
 
 		opportunities = append(opportunities, row)
@@ -281,6 +302,28 @@ func (t *ScanDeltaNeutralOpportunitiesTool) Execute(ctx context.Context, args ma
 	}
 	out := formatScanResults(opportunities, limitResults, includeStability)
 	return UserResult(out)
+}
+
+// spotStatusFor reports whether a spot pair exists on the exchange for the given
+// spot symbol (e.g. "BTC/USDT"). Returns:
+//   - "unknown" when spot markets could not be loaded (don't claim "no spot" falsely),
+//   - "no-spot" when markets loaded but the symbol is absent or not an active spot pair,
+//   - "yes" when an active spot market exists.
+func spotStatusFor(spotMarkets map[string]ccxt.MarketInterface, spotSymbol string) string {
+	if spotMarkets == nil {
+		return "unknown"
+	}
+	m, exists := spotMarkets[spotSymbol]
+	if !exists {
+		return "no-spot"
+	}
+	if m.Active != nil && !*m.Active {
+		return "no-spot"
+	}
+	if m.Spot != nil && !*m.Spot {
+		return "no-spot"
+	}
+	return "yes"
 }
 
 // isActiveSwap checks if a market is an active swap/perpetual.
@@ -388,13 +431,13 @@ func formatScanResults(opportunities []opportunityRow, limitResults int, include
 
 	// Header.
 	if includeStability {
-		sb.WriteString(fmt.Sprintf("%-5s %-8s %-15s %10s %10s %-12s %10s %10s %10s %10s %s\n",
-			"Rank", "Asset", "Futures", "Funding%", "APR%", "Direction", "7d Mean%", "7d Std%", "14d Mean%", "14d Std%", "Label"))
-		sb.WriteString(strings.Repeat("-", 140) + "\n")
+		sb.WriteString(fmt.Sprintf("%-5s %-8s %-15s %-8s %10s %10s %-12s %10s %10s %10s %10s %s\n",
+			"Rank", "Asset", "Futures", "Spot", "Funding%", "APR%", "Direction", "7d Mean%", "7d Std%", "14d Mean%", "14d Std%", "Label"))
+		sb.WriteString(strings.Repeat("-", 150) + "\n")
 	} else {
-		sb.WriteString(fmt.Sprintf("%-5s %-8s %-15s %10s %10s %-12s %s\n",
-			"Rank", "Asset", "Futures", "Funding%", "APR%", "Direction", "Label"))
-		sb.WriteString(strings.Repeat("-", 80) + "\n")
+		sb.WriteString(fmt.Sprintf("%-5s %-8s %-15s %-8s %10s %10s %-12s %s\n",
+			"Rank", "Asset", "Futures", "Spot", "Funding%", "APR%", "Direction", "Label"))
+		sb.WriteString(strings.Repeat("-", 90) + "\n")
 	}
 
 	// Rows.
@@ -418,21 +461,53 @@ func formatScanResults(opportunities []opportunityRow, limitResults int, include
 			if row.stability14dStddev != nil {
 				s14dStd = fmt.Sprintf("%.4f", *row.stability14dStddev*100)
 			}
-			line = fmt.Sprintf("%-5d %-8s %-15s %10.6f %10.2f %-12s %10s %10s %10s %10s %s\n",
-				rank, row.asset, row.symbol, row.fundingPercent, row.apr, row.direction,
+			line = fmt.Sprintf("%-5d %-8s %-15s %-8s %10.6f %10.2f %-12s %10s %10s %10s %10s %s\n",
+				rank, row.asset, row.symbol, spotCell(row.spotStatus), row.fundingPercent, row.apr, row.direction,
 				s7dMean, s7dStd, s14dMean, s14dStd, row.label)
 		} else {
-			line = fmt.Sprintf("%-5d %-8s %-15s %10.6f %10.2f %-12s %s\n",
-				rank, row.asset, row.symbol, row.fundingPercent, row.apr, row.direction, row.label)
+			line = fmt.Sprintf("%-5d %-8s %-15s %-8s %10.6f %10.2f %-12s %s\n",
+				rank, row.asset, row.symbol, spotCell(row.spotStatus), row.fundingPercent, row.apr, row.direction, row.label)
 		}
 		sb.WriteString(line)
 	}
 
+	// Caution: list any displayed assets that have a perp but no spot pair here.
+	var noSpot []string
+	var unknownSpot bool
+	for _, row := range display {
+		switch row.spotStatus {
+		case "no-spot":
+			noSpot = append(noSpot, row.asset)
+		case "unknown":
+			unknownSpot = true
+		}
+	}
+
 	sb.WriteString("\n")
+	if len(noSpot) > 0 {
+		sb.WriteString(fmt.Sprintf("⚠️  No spot pair on this exchange for: %s — funding rank is still valid, but the delta-neutral spot leg cannot be opened here (source spot elsewhere, or treat as futures-only).\n",
+			strings.Join(noSpot, ", ")))
+	}
+	if unknownSpot {
+		sb.WriteString("⚠️  Spot availability could not be verified for some rows (spot markets unavailable) — shown as 'unknown'.\n")
+	}
+	sb.WriteString("Spot column: 'yes' = spot pair available | 'no-spot' = perp only on this exchange | 'unknown' = could not verify.\n")
 	sb.WriteString("Note: Funding-only screen — drill into top picks with get_orderbook/futures_risk_summary before building a plan.\n")
-	sb.WriteString("Legend: 'attractive' = positive carry + stable | 'watch' = near-zero/unstable | 'blocked' = no perp or no funding\n")
+	sb.WriteString("Legend: 'attractive' = positive carry + stable | 'watch' = near-zero/unstable/no-spot | 'blocked' = no perp or no funding\n")
 
 	return sb.String()
+}
+
+// spotCell renders the spot-availability status for the table column.
+func spotCell(status string) string {
+	switch status {
+	case "yes":
+		return "yes"
+	case "no-spot":
+		return "NO-SPOT"
+	default:
+		return "unknown"
+	}
 }
 
 // cmcListingResponse is the structure for CMC API response.
