@@ -300,6 +300,18 @@ func (t *OpenDeltaNeutralPositionTool) executeFuturesLeg(ctx context.Context, pl
 		UpdatedAt:             time.Now(),
 	}
 
+	// Apply leverage before placing the futures order
+	leverage := plan.FuturesLeverage
+	if leverage <= 0 {
+		leverage = 1 // Default to 1x if not specified
+	}
+	if _, err := fp.SetFuturesLeverage(ctx, plan.FuturesSymbol, int64(leverage), plan.FuturesMarginMode, plan.FuturesSide); err != nil {
+		leg.State = string(deltaneutral.LegStateFailed)
+		leg.ErrorMsg = fmt.Sprintf("set leverage: %v", err)
+		t.store.SaveExecutionLeg(ctx, leg)
+		return false, fmt.Errorf("set leverage: %w", err)
+	}
+
 	// Create the futures order
 	order, err := fp.CreateFuturesOrder(ctx, broker.FuturesOrderRequest{
 		Symbol:       plan.FuturesSymbol,
@@ -344,12 +356,25 @@ func (t *OpenDeltaNeutralPositionTool) executeSpotLeg(ctx context.Context, plan 
 		return false, fmt.Errorf("spot market %s is closed", plan.SpotSymbol)
 	}
 
-	// For spot, assume 1:1 notional mapping (simplification; real implementation would use LOB)
-	quantity := plan.SpotNotionalUSDT // Simplified: assume spot_symbol base price ~= 1 USDT per unit for this estimate
-	if plan.SpotNotionalUSDT > 0 {
-		// In a real scenario, fetch spot price and compute quantity
-		quantity = plan.SpotNotionalUSDT
+	// Fetch live spot price
+	md, ok := sp.(broker.MarketDataProvider)
+	if !ok {
+		return false, fmt.Errorf("spot provider does not support market data")
 	}
+	ticker, err := md.FetchTicker(ctx, plan.SpotSymbol)
+	if err != nil {
+		return false, fmt.Errorf("fetch spot ticker: %w", err)
+	}
+	price := 0.0
+	if ticker.Last != nil {
+		price = *ticker.Last
+	}
+	if price <= 0 {
+		return false, fmt.Errorf("invalid spot price for %s", plan.SpotSymbol)
+	}
+
+	// Compute quantity from notional and live price
+	quantity := plan.SpotNotionalUSDT / price
 
 	leg := &deltaneutral.ExecutionLeg{
 		ExecutionID:           exec.ID,
@@ -361,7 +386,7 @@ func (t *OpenDeltaNeutralPositionTool) executeSpotLeg(ctx context.Context, plan 
 		OrderType:             "market",
 		RequestedAmount:       quantity,
 		RequestedNotionalUSDT: plan.SpotNotionalUSDT,
-		RequestedPrice:        1.0, // Placeholder; should be actual market price
+		RequestedPrice:        price,
 		State:                 string(deltaneutral.LegStatePlacing),
 		CreatedAt:             time.Now(),
 		UpdatedAt:             time.Now(),
@@ -380,7 +405,7 @@ func (t *OpenDeltaNeutralPositionTool) executeSpotLeg(ctx context.Context, plan 
 	leg.State = string(deltaneutral.LegStateFilled)
 	leg.FilledQuantity = quantity
 	leg.FilledNotionalUSDT = plan.SpotNotionalUSDT
-	leg.AvgFillPrice = plan.SpotNotionalUSDT / quantity
+	leg.AvgFillPrice = price
 
 	_, err = t.store.SaveExecutionLeg(ctx, leg)
 	return err == nil, err

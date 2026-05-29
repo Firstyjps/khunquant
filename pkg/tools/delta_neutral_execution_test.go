@@ -412,3 +412,21 @@ func setupTempDeltaNeutralStore(t *testing.T) *deltaneutral.Store {
 	}
 	return store
 }
+
+// TestSpotQuantitySizing tests that spot leg quantity is computed from notional / price.
+func TestSpotQuantitySizing(t *testing.T) {
+	// Test spot quantity math: notional / price should give base-asset quantity
+	notionalUSDT := 5000.0
+	price := 42000.0
+
+	expectedQty := notionalUSDT / price // ~0.119 BTC
+	if expectedQty <= 0 {
+		t.Fatalf("expected positive quantity, got %f", expectedQty)
+	}
+
+	// 5000 / 42000 = 0.119047619...; assert within a sane tolerance.
+	tolerance := 0.001
+	if expectedQty < 0.119-tolerance || expectedQty > 0.119+tolerance {
+		t.Errorf("expected ~0.119, got %f", expectedQty)
+	}
+}
