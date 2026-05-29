@@ -32,6 +32,7 @@ import (
 	"github.com/cryptoquantumwave/khunquant/pkg/config"
 	"github.com/cryptoquantumwave/khunquant/pkg/cron"
 	"github.com/cryptoquantumwave/khunquant/pkg/dca"
+	"github.com/cryptoquantumwave/khunquant/pkg/deltaneutral"
 	"github.com/cryptoquantumwave/khunquant/pkg/devices"
 	_ "github.com/cryptoquantumwave/khunquant/pkg/exchanges/binance"
 	_ "github.com/cryptoquantumwave/khunquant/pkg/exchanges/binanceth"
@@ -655,7 +656,17 @@ func setupCronTool(
 		dcaStore = store
 	}
 
-	// Set onJob handler — alert and DCA jobs are handled directly in code;
+	// Delta-neutral store — opened unconditionally so the cron trigger gate works even when
+	// individual DN tools are disabled (e.g. legacy dn:* jobs still in jobs.json).
+	var dnStore *deltaneutral.Store
+	if store, storeErr := deltaneutral.NewStore(workspace); storeErr != nil {
+		logger.ErrorCF("gateway", "Failed to open delta-neutral store; DN cron gate and tools disabled",
+			map[string]any{"error": storeErr.Error()})
+	} else {
+		dnStore = store
+	}
+
+	// Set onJob handler — alert, DCA, and DN jobs are handled directly in code;
 	// all other jobs are routed through the agent LLM via cronTool.
 	cronService.SetOnJob(func(job *cron.CronJob) (string, error) {
 		if strings.HasPrefix(job.Name, "price_alert:") {
@@ -666,6 +677,9 @@ func setupCronTool(
 		}
 		if strings.HasPrefix(job.Name, "dca:") && dcaStore != nil {
 			return handleDCAAutoJob(context.Background(), job, cfg, dcaStore, cronTool)
+		}
+		if strings.HasPrefix(job.Name, "dn:") && dnStore != nil {
+			return handleDeltaNeutralMonitorJob(context.Background(), job, cfg, dnStore, cronTool, msgBus)
 		}
 		if cronTool != nil {
 			return cronTool.ExecuteJob(context.Background(), job), nil
@@ -710,6 +724,38 @@ func setupCronTool(
 		}
 		if cfg.Tools.IsToolEnabled("get_dca_summary") {
 			agentLoop.RegisterTool(tools.NewGetDCASummaryTool(cfg, dcaStore))
+		}
+	}
+
+	// Delta-neutral tools (Track F) — require cron service + the store opened above.
+	dnEnabled := cfg.Tools.IsToolEnabled("create_delta_neutral_plan") ||
+		cfg.Tools.IsToolEnabled("list_delta_neutral_plans") ||
+		cfg.Tools.IsToolEnabled("get_delta_neutral_plan") ||
+		cfg.Tools.IsToolEnabled("update_delta_neutral_plan") ||
+		cfg.Tools.IsToolEnabled("delete_delta_neutral_plan") ||
+		cfg.Tools.IsToolEnabled("get_delta_neutral_summary") ||
+		cfg.Tools.IsToolEnabled("get_delta_neutral_history")
+	if dnEnabled && dnStore != nil {
+		if cfg.Tools.IsToolEnabled("create_delta_neutral_plan") {
+			agentLoop.RegisterTool(tools.NewCreateDeltaNeutralPlanTool(cfg, dnStore, cronService))
+		}
+		if cfg.Tools.IsToolEnabled("list_delta_neutral_plans") {
+			agentLoop.RegisterTool(tools.NewListDeltaNeutralPlansTool(dnStore))
+		}
+		if cfg.Tools.IsToolEnabled("get_delta_neutral_plan") {
+			agentLoop.RegisterTool(tools.NewGetDeltaNeutralPlanTool(dnStore))
+		}
+		if cfg.Tools.IsToolEnabled("update_delta_neutral_plan") {
+			agentLoop.RegisterTool(tools.NewUpdateDeltaNeutralPlanTool(dnStore, cronService))
+		}
+		if cfg.Tools.IsToolEnabled("delete_delta_neutral_plan") {
+			agentLoop.RegisterTool(tools.NewDeleteDeltaNeutralPlanTool(dnStore, cronService))
+		}
+		if cfg.Tools.IsToolEnabled("get_delta_neutral_summary") {
+			agentLoop.RegisterTool(tools.NewGetDeltaNeutralSummaryTool(dnStore))
+		}
+		if cfg.Tools.IsToolEnabled("get_delta_neutral_history") {
+			agentLoop.RegisterTool(tools.NewGetDeltaNeutralHistoryTool(dnStore))
 		}
 	}
 
