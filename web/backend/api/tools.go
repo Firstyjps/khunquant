@@ -504,6 +504,20 @@ var toolCatalog = []toolCatalogEntry{
 		ConfigKey:   tools.NameScanDeltaNeutralOpportunities,
 	},
 
+	// Earn (Track G — Savings/Staking)
+	{
+		Name:        tools.NameEarnOverview,
+		Description: tools.DescEarnOverview,
+		Category:    tools.CatDeltaNeutral,
+		ConfigKey:   tools.NameEarnOverview,
+	},
+	{
+		Name:        tools.NameManageEarnPosition,
+		Description: tools.DescManageEarnPosition,
+		Category:    tools.CatDeltaNeutral,
+		ConfigKey:   tools.NameManageEarnPosition,
+	},
+
 	// PnL — Profit and Loss (Track F)
 	{
 		Name:        tools.NameGetPnLSummary,
@@ -785,6 +799,10 @@ func applyToolState(cfg *config.Config, toolName string, enabled bool) error {
 		cfg.Tools.ResizeDeltaNeutralPosition.Enabled = enabled
 	case tools.NameScanDeltaNeutralOpportunities:
 		cfg.Tools.ScanDeltaNeutralOpportunities.Enabled = enabled
+	case tools.NameEarnOverview:
+		cfg.Tools.EarnOverview.Enabled = enabled
+	case tools.NameManageEarnPosition:
+		cfg.Tools.ManageEarnPosition.Enabled = enabled
 	case tools.NameGetPnLSummary:
 		cfg.Tools.GetPnLSummary.Enabled = enabled
 	case tools.NameGetPnLDetail:

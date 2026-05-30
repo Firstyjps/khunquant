@@ -255,6 +255,12 @@ func NewAgentInstance(
 	if cfg.Tools.IsToolEnabled("scan_delta_neutral_opportunities") {
 		toolsRegistry.Register(tools.NewScanDeltaNeutralOpportunitiesTool(cfg))
 	}
+	if cfg.Tools.IsToolEnabled("earn_overview") {
+		toolsRegistry.Register(tools.NewEarnOverviewTool(cfg))
+	}
+	if cfg.Tools.IsToolEnabled("manage_earn_position") {
+		toolsRegistry.Register(tools.NewManageEarnPositionTool(cfg))
+	}
 
 	// Technical analysis tools (Track C).
 	if cfg.Tools.IsToolEnabled("calculate_indicators") {

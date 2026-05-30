@@ -658,6 +658,14 @@ func DefaultConfig() *Config {
 				Enabled: true,
 			},
 
+			// Earn (Track G — Savings/Staking)
+			EarnOverview: ToolConfig{
+				Enabled: true,
+			},
+			ManageEarnPosition: ToolConfig{
+				Enabled: false,
+			},
+
 			// PnL — Profit and Loss (Track F)
 			GetPnLSummary: ToolConfig{
 				Enabled: true,

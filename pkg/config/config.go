@@ -1072,17 +1072,21 @@ type ToolsConfig struct {
 	GetDCASummary   ToolConfig `json:"get_dca_summary"   envPrefix:"KHUNQUANT_TOOLS_GET_DCA_SUMMARY_"`
 
 	// Delta-Neutral (Track G)
-	CreateDeltaNeutralPlan ToolConfig `json:"create_delta_neutral_plan"  envPrefix:"KHUNQUANT_TOOLS_CREATE_DELTA_NEUTRAL_PLAN_"`
-	ListDeltaNeutralPlans  ToolConfig `json:"list_delta_neutral_plans"   envPrefix:"KHUNQUANT_TOOLS_LIST_DELTA_NEUTRAL_PLANS_"`
-	GetDeltaNeutralPlan    ToolConfig `json:"get_delta_neutral_plan"     envPrefix:"KHUNQUANT_TOOLS_GET_DELTA_NEUTRAL_PLAN_"`
-	UpdateDeltaNeutralPlan ToolConfig `json:"update_delta_neutral_plan"  envPrefix:"KHUNQUANT_TOOLS_UPDATE_DELTA_NEUTRAL_PLAN_"`
-	DeleteDeltaNeutralPlan ToolConfig `json:"delete_delta_neutral_plan"  envPrefix:"KHUNQUANT_TOOLS_DELETE_DELTA_NEUTRAL_PLAN_"`
-	GetDeltaNeutralSummary ToolConfig `json:"get_delta_neutral_summary"  envPrefix:"KHUNQUANT_TOOLS_GET_DELTA_NEUTRAL_SUMMARY_"`
-	GetDeltaNeutralHistory ToolConfig `json:"get_delta_neutral_history"  envPrefix:"KHUNQUANT_TOOLS_GET_DELTA_NEUTRAL_HISTORY_"`
-	OpenDeltaNeutralPosition ToolConfig `json:"open_delta_neutral_position" envPrefix:"KHUNQUANT_TOOLS_OPEN_DELTA_NEUTRAL_POSITION_"`
-	UnwindDeltaNeutralPosition ToolConfig `json:"unwind_delta_neutral_position" envPrefix:"KHUNQUANT_TOOLS_UNWIND_DELTA_NEUTRAL_POSITION_"`
-	ResizeDeltaNeutralPosition ToolConfig `json:"resize_delta_neutral_position" envPrefix:"KHUNQUANT_TOOLS_RESIZE_DELTA_NEUTRAL_POSITION_"`
+	CreateDeltaNeutralPlan        ToolConfig `json:"create_delta_neutral_plan"  envPrefix:"KHUNQUANT_TOOLS_CREATE_DELTA_NEUTRAL_PLAN_"`
+	ListDeltaNeutralPlans         ToolConfig `json:"list_delta_neutral_plans"   envPrefix:"KHUNQUANT_TOOLS_LIST_DELTA_NEUTRAL_PLANS_"`
+	GetDeltaNeutralPlan           ToolConfig `json:"get_delta_neutral_plan"     envPrefix:"KHUNQUANT_TOOLS_GET_DELTA_NEUTRAL_PLAN_"`
+	UpdateDeltaNeutralPlan        ToolConfig `json:"update_delta_neutral_plan"  envPrefix:"KHUNQUANT_TOOLS_UPDATE_DELTA_NEUTRAL_PLAN_"`
+	DeleteDeltaNeutralPlan        ToolConfig `json:"delete_delta_neutral_plan"  envPrefix:"KHUNQUANT_TOOLS_DELETE_DELTA_NEUTRAL_PLAN_"`
+	GetDeltaNeutralSummary        ToolConfig `json:"get_delta_neutral_summary"  envPrefix:"KHUNQUANT_TOOLS_GET_DELTA_NEUTRAL_SUMMARY_"`
+	GetDeltaNeutralHistory        ToolConfig `json:"get_delta_neutral_history"  envPrefix:"KHUNQUANT_TOOLS_GET_DELTA_NEUTRAL_HISTORY_"`
+	OpenDeltaNeutralPosition      ToolConfig `json:"open_delta_neutral_position" envPrefix:"KHUNQUANT_TOOLS_OPEN_DELTA_NEUTRAL_POSITION_"`
+	UnwindDeltaNeutralPosition    ToolConfig `json:"unwind_delta_neutral_position" envPrefix:"KHUNQUANT_TOOLS_UNWIND_DELTA_NEUTRAL_POSITION_"`
+	ResizeDeltaNeutralPosition    ToolConfig `json:"resize_delta_neutral_position" envPrefix:"KHUNQUANT_TOOLS_RESIZE_DELTA_NEUTRAL_POSITION_"`
 	ScanDeltaNeutralOpportunities ToolConfig `json:"scan_delta_neutral_opportunities" envPrefix:"KHUNQUANT_TOOLS_SCAN_DELTA_NEUTRAL_OPPORTUNITIES_"`
+
+	// Earn (Track G — Savings/Staking)
+	EarnOverview       ToolConfig `json:"earn_overview"        envPrefix:"KHUNQUANT_TOOLS_EARN_OVERVIEW_"`
+	ManageEarnPosition ToolConfig `json:"manage_earn_position" envPrefix:"KHUNQUANT_TOOLS_MANAGE_EARN_POSITION_"`
 
 	// PnL — Profit and Loss (Track F)
 	GetPnLSummary ToolConfig `json:"get_pnl_summary" envPrefix:"KHUNQUANT_TOOLS_GET_PNL_SUMMARY_"`
@@ -1605,6 +1609,10 @@ func (t *ToolsConfig) IsToolEnabled(name string) bool {
 		return t.ResizeDeltaNeutralPosition.Enabled
 	case "scan_delta_neutral_opportunities":
 		return t.ScanDeltaNeutralOpportunities.Enabled
+	case "earn_overview":
+		return t.EarnOverview.Enabled
+	case "manage_earn_position":
+		return t.ManageEarnPosition.Enabled
 	case "get_pnl_summary":
 		return t.GetPnLSummary.Enabled
 	case "get_pnl_detail":

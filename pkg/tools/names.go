@@ -100,6 +100,10 @@ const (
 	NameUnwindDeltaNeutralPosition    = "unwind_delta_neutral_position"
 	NameResizeDeltaNeutralPosition    = "resize_delta_neutral_position"
 	NameScanDeltaNeutralOpportunities = "scan_delta_neutral_opportunities"
+
+	// Earn (Track G — Savings/Staking)
+	NameEarnOverview       = "earn_overview"
+	NameManageEarnPosition = "manage_earn_position"
 )
 
 // Category constants for the web UI tool catalog.
@@ -189,4 +193,8 @@ const (
 	DescUnwindDeltaNeutralPosition    = "Close a delta-neutral position (unwind both legs: reduce-only futures close + spot sell). Recovery tool for unhedged exposure or manual closure. Approval-mode: confirm=true required."
 	DescResizeDeltaNeutralPosition    = "Adjust an active delta-neutral position by resizing both legs equally (approval-mode). Maintains delta-neutrality (equal notional on both legs). Partial fill → recovery_required. Dry-run (confirm=false) shows review; confirm=true executes."
 	DescScanDeltaNeutralOpportunities = "Scan the top N crypto assets by market cap for delta-neutral funding-carry opportunities: batch-fetch funding rates, optionally compute stability stats, and return a ranked table. Provider may be 'binance', 'okx', or empty/'all' to scan every supported exchange and combine the results (each row tagged with its exchange). Sortable via sort_by (funding_rate [default], apr, 7d_avg, 14d_avg) and sort_order (desc [default], asc) on SIGNED values — default funding_rate desc puts most-positive funding first, most-negative last; sorting by 7d_avg/14d_avg computes stability for all candidates. Each row has a Spot column flagging whether the asset also has a spot pair on its exchange (perp-but-no-spot rows are kept and marked NO-SPOT, not filtered out). Funding-only screen — validate with risk tools before trading."
+
+	// Earn tool descriptions
+	DescEarnOverview       = "View all flexible earn products available on an exchange and current earn positions held. Lists APY, minimum subscription amounts, and auto-subscription status. Provider may be 'binance', 'okx', or empty/'all' to query all supported exchanges. Positions require API keys; products may be public."
+	DescManageEarnPosition = "Subscribe to, redeem from, or configure auto-subscription on a flexible earn product. Actions: 'subscribe' (invest amount with optional auto-renewal), 'redeem' (withdraw amount or all), 'set_auto_subscribe' (enable/disable auto-renewal). Approval-mode: confirm=false shows dry-run review, confirm=true executes the transaction."
 )
