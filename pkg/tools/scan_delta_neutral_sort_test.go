@@ -166,6 +166,64 @@ func TestScanSort_14dAvgAsc(t *testing.T) {
 	}
 }
 
+// TestScanSort_StabilityFollowsDisplayOrder guards the regression where 7d/14d
+// stats were fetched for the abs(APR)-largest rows instead of the rows actually
+// shown. With funding_rate ASC + a small top_k_stability, the stats must land on
+// the displayed top rows (smallest funding), NOT the largest-APR rows.
+func TestScanSort_StabilityFollowsDisplayOrder(t *testing.T) {
+	mock := newSortScanMock(map[string]float64{
+		"AAA/USDT:USDT": 0.0001, // smallest funding → shown first under asc
+		"BBB/USDT:USDT": 0.0002,
+		"CCC/USDT:USDT": 0.0005, // largest funding/APR → would win the old abs-APR pre-rank
+	})
+	now := time.Now().UTC().UnixMilli()
+	mock.fetchPublicFundingRateHistoryFn = func(ctx context.Context, symbol string, since *int64, limit int) ([]ccxt.FundingRateHistory, error) {
+		v := 0.0003 // any non-empty history so stats compute
+		ts := now
+		return []ccxt.FundingRateHistory{{Timestamp: &ts, FundingRate: &v}}, nil
+	}
+
+	res := runSortScan(t, mock, map[string]any{
+		"include_stability": true,
+		"sort_order":        "asc",
+		"sort_by":           "funding_rate",
+		"top_k_stability":   2.0, // only the displayed top-2 (AAA, BBB) should get stats
+	})
+	if res.IsError {
+		t.Fatalf("unexpected error: %v", res.ForLLM)
+	}
+
+	// Parse the data rows in display order. Columns (whitespace-split):
+	//   0 Rank | 1 Exch | 2 Asset | 3 Futures | 4 Spot | 5 Funding% | 6 APR% |
+	//   7 Direction-word1 | 8 Direction-word2 | 9 7d Mean% | ...
+	// Direction is two words ("short perp"), so the 7d Mean cell is index 9.
+	const mean7dIdx = 9
+	var rows [][]string
+	for _, line := range strings.Split(res.ForUser, "\n") {
+		f := strings.Fields(line)
+		if len(f) > mean7dIdx && (f[2] == "AAA" || f[2] == "BBB" || f[2] == "CCC") {
+			rows = append(rows, f)
+		}
+	}
+	if len(rows) != 3 {
+		t.Fatalf("expected 3 data rows, got %d:\n%s", len(rows), res.ForUser)
+	}
+	// Display order must be ascending funding: AAA, BBB, CCC.
+	if rows[0][2] != "AAA" || rows[1][2] != "BBB" || rows[2][2] != "CCC" {
+		t.Fatalf("expected asc order AAA,BBB,CCC; got %s,%s,%s", rows[0][2], rows[1][2], rows[2][2])
+	}
+	// The 7d Mean% column must be present for the displayed top-2 and absent ("-")
+	// for the 3rd (beyond top_k_stability) — proving the fetch set follows the
+	// DISPLAY order, not abs(APR).
+	hasStat := func(cell string) bool { return strings.Contains(cell, "0.0") }
+	if !hasStat(rows[0][mean7dIdx]) || !hasStat(rows[1][mean7dIdx]) {
+		t.Fatalf("displayed top-2 (AAA,BBB) must have stats, got %q,%q\n%s", rows[0][mean7dIdx], rows[1][mean7dIdx], res.ForUser)
+	}
+	if rows[2][mean7dIdx] != "-" {
+		t.Fatalf("CCC (beyond top_k_stability) should have no stats, got %q\n%s", rows[2][mean7dIdx], res.ForUser)
+	}
+}
+
 // TestScanSort_InvalidParams covers validation errors.
 func TestScanSort_InvalidParams(t *testing.T) {
 	mock := newSortScanMock(map[string]float64{"AAA/USDT:USDT": 0.0001})

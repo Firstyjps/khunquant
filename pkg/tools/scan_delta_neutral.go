@@ -211,16 +211,24 @@ func (t *ScanDeltaNeutralOpportunitiesTool) Execute(ctx context.Context, args ma
 		return ErrorResult(fmt.Sprintf("scan failed for all providers: %s", strings.Join(providerErrs, "; ")))
 	}
 
-	// Pre-rank by abs(APR) descending — this only decides WHICH rows get stability
-	// fetched in the top-K case; the final user-facing sort is applied after stage 2.
-	sort.Slice(opportunities, func(i, j int) bool {
-		return math.Abs(opportunities[i].apr) > math.Abs(opportunities[j].apr)
-	})
+	// Order the rows BEFORE deciding which get stability, so the stability fetch
+	// covers exactly the rows the user will see at the top of the table:
+	//   - funding_rate/apr sorts are fully determined now (no history needed), so we
+	//     apply the final sort here and fetch stability for the displayed top-K.
+	//   - stability-field sorts can't be ordered yet, so we pre-rank by abs(APR)
+	//     (most-interesting first) to choose the capped fetch set, then sort after.
+	if sortByStability {
+		sort.Slice(opportunities, func(i, j int) bool {
+			return math.Abs(opportunities[i].apr) > math.Abs(opportunities[j].apr)
+		})
+	} else {
+		sortOpportunities(opportunities, sortBy, sortOrder)
+	}
 
 	// Stage 2: Optionally fetch stability (across all exchanges) using each row's
 	// own provider handle. When sorting by a stability field, fetch for ALL
 	// candidates (bounded by maxStabilityFetch) so the final sort is correct;
-	// otherwise just the top-K most-interesting rows.
+	// otherwise just the top-K rows that will actually be displayed.
 	if includeStability && len(opportunities) > 0 {
 		eg, egCtx := errgroup.WithContext(ctx)
 		eg.SetLimit(4)
@@ -265,8 +273,11 @@ func (t *ScanDeltaNeutralOpportunitiesTool) Execute(ctx context.Context, args ma
 		_ = eg.Wait() // Ignore partial failures.
 	}
 
-	// Final user-facing sort (after stage 2 so stability values are populated).
-	sortOpportunities(opportunities, sortBy, sortOrder)
+	// For stability-field sorts the values are now populated, so apply the final
+	// sort here. (funding_rate/apr were already sorted before stage 2.)
+	if sortByStability {
+		sortOpportunities(opportunities, sortBy, sortOrder)
+	}
 
 	if len(opportunities) == 0 {
 		return UserResult("No opportunities found (opportunities list is empty).")
