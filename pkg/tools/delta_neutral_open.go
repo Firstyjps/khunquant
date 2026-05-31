@@ -36,7 +36,7 @@ func (t *OpenDeltaNeutralPositionTool) Parameters() map[string]any {
 		"properties": map[string]any{
 			"plan_id": map[string]any{
 				"type":        "integer",
-			"description": "ID of the draft or ready delta-neutral plan to open.",
+			"description": "ID of the delta-neutral plan to open. Accepts draft, ready, or failed (retry).",
 			},
 			"confirm": map[string]any{
 				"type":        "boolean",
@@ -61,9 +61,12 @@ func (t *OpenDeltaNeutralPositionTool) Execute(ctx context.Context, args map[str
 		return ErrorResult(fmt.Sprintf("cannot load plan %d: %v", int64(planID), err))
 	}
 
-	// Allow opening directly from draft or ready. Other states are invalid.
-	if plan.Status != deltaneutral.PlanStatusDraft && plan.Status != deltaneutral.PlanStatusReady {
-		return ErrorResult(fmt.Sprintf("plan status is %q; only draft or ready plans can be opened.", plan.Status))
+	// Allow opening from draft, ready, or failed (retry/restart). Other states are invalid.
+	switch plan.Status {
+	case deltaneutral.PlanStatusDraft, deltaneutral.PlanStatusReady, deltaneutral.PlanStatusFailed:
+		// ok
+	default:
+		return ErrorResult(fmt.Sprintf("plan status is %q; only draft, ready, or failed plans can be opened.", plan.Status))
 	}
 
 	// --- Safety gates (sequence from futures.go §225-290) ---
