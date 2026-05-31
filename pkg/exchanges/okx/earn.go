@@ -100,31 +100,109 @@ func (a *OKXBrokerAdapter) FetchFlexibleEarnProducts(_ context.Context, asset st
 	return products, nil
 }
 
-// FetchFlexibleEarnPositions returns currently held OKX flexible savings balances.
+// FetchFlexibleEarnPositions returns currently held OKX flexible savings / earn balances.
+//
+// OKX has multiple earn products with different APIs:
+//  1. Old Savings (lending pool): /api/v5/finance/savings/balance → amt field
+//  2. Newer "Simple Earn" may show as frozenBal in /api/v5/account/balance (trading UTA)
+//  3. Funding account frozen balances: /api/v5/asset/balances → frozenBal field
+//
+// All three are queried and merged; duplicates (same asset already found) are skipped.
 func (a *OKXBrokerAdapter) FetchFlexibleEarnPositions(_ context.Context) ([]broker.EarnPosition, error) {
 	if err := a.requireAuth(); err != nil {
 		return nil, err
 	}
 	var positions []broker.EarnPosition
-	err := catchPanic(func() error {
+
+	// Helper: check if an asset is already in positions.
+	has := func(asset string) bool {
+		for _, p := range positions {
+			if p.Asset == asset {
+				return true
+			}
+		}
+		return false
+	}
+
+	// ── Source 1: old Savings / Simple Earn lending pool ─────────────────
+	_ = catchPanic(func() error {
 		res := <-a.client.Core.PrivateGetFinanceSavingsBalance(map[string]interface{}{})
 		if ccxt.IsError(res) {
 			return ccxt.CreateReturnError(res)
 		}
 		for _, row := range okxData(res) {
-			positions = append(positions, broker.EarnPosition{
-				Exchange:  Name,
-				Asset:     okxString(row["ccy"]),
-				ProductID: okxString(row["ccy"]),
-				Amount:    okxFloat(row["amt"]),
-				APY:       okxFloat(row["earningRate"]),
-			})
+			asset := okxString(row["ccy"])
+			if !has(asset) {
+				positions = append(positions, broker.EarnPosition{
+					Exchange:  Name,
+					Asset:     asset,
+					ProductID: asset,
+					Amount:    okxFloat(row["amt"]),
+					APY:       okxFloat(row["earningRate"]),
+				})
+			}
 		}
 		return nil
 	})
-	if err != nil {
-		return nil, fmt.Errorf("okx earn: list positions: %w", err)
-	}
+
+	// ── Source 2: trading account frozenBal (UTA — Simple Earn locks assets here) ──
+	// OKX Unified Trade Account shows earn-locked assets as frozenBal in account/balance.
+	// cashBal = freely tradable; frozenBal = locked in earn/orders.
+	// We add frozenBal only when the asset isn't already counted from savings.
+	_ = catchPanic(func() error {
+		res := <-a.client.Core.PrivateGetAccountBalance(map[string]interface{}{})
+		if ccxt.IsError(res) {
+			return nil // supplemental: ignore error
+		}
+		m, ok := res.(map[string]interface{})
+		if !ok {
+			return nil
+		}
+		dataArr, _ := m["data"].([]interface{})
+		if len(dataArr) == 0 {
+			return nil
+		}
+		acct, _ := dataArr[0].(map[string]interface{})
+		details, _ := acct["details"].([]interface{})
+		for _, d := range details {
+			dm, _ := d.(map[string]interface{})
+			asset := okxString(dm["ccy"])
+			frozen := okxFloat(dm["frozenBal"])
+			if frozen > 0 && !has(asset) {
+				positions = append(positions, broker.EarnPosition{
+					Exchange:  Name,
+					Asset:     asset,
+					ProductID: asset + ":trading:frozen",
+					Amount:    frozen,
+				})
+			}
+		}
+		return nil
+	})
+
+	// ── Source 3: funding account frozenBal ───────────────────────────────
+	// OKX Simple Earn Flexible draws from the funding account; the subscribed
+	// amount appears as frozenBal in /api/v5/asset/balances.
+	_ = catchPanic(func() error {
+		res := <-a.client.Core.PrivateGetAssetBalances(map[string]interface{}{})
+		if ccxt.IsError(res) {
+			return nil // supplemental: ignore error
+		}
+		for _, row := range okxData(res) {
+			asset := okxString(row["ccy"])
+			frozen := okxFloat(row["frozenBal"])
+			if frozen > 0 && !has(asset) {
+				positions = append(positions, broker.EarnPosition{
+					Exchange:  Name,
+					Asset:     asset,
+					ProductID: asset + ":funding:frozen",
+					Amount:    frozen,
+				})
+			}
+		}
+		return nil
+	})
+
 	return positions, nil
 }
 

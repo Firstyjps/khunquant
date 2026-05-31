@@ -220,12 +220,25 @@ func handleDeltaNeutralMonitorJob(
 					}
 				}
 
-				// Fall back to plan notional if both API calls failed, to avoid
-				// triggering a false drift alarm when APIs are temporarily down.
-				if fetchedAny {
+				// Fall back to plan notional in two cases:
+				//  a) Both API calls failed (APIs down) — avoid false drift alarm.
+				//  b) Balance found but < 1% of expected notional — spot is likely
+				//     subscribed to an earn product whose API is not accessible
+				//     (e.g. OKX Simple Earn Flexible, which is not exposed by CCXT).
+				//     Use plan notional as proxy so the monitor doesn't false-alarm.
+				valueUSDT := totalQty * spotState.Price
+				earnGap := plan.SpotNotionalUSDT > 0 &&
+					valueUSDT < plan.SpotNotionalUSDT*0.01
+
+				if fetchedAny && !earnGap {
 					spotState.Quantity = totalQty
-					spotState.ValueUSDT = totalQty * spotState.Price
+					spotState.ValueUSDT = valueUSDT
 				} else {
+					if fetchedAny && earnGap {
+						logger.WarnCF("dn-monitor", "Spot balance near-zero vs plan notional — assuming spot leg is in an inaccessible earn product; using plan notional for drift", map[string]any{
+							"plan_id": planID, "real_value_usdt": valueUSDT, "plan_notional_usdt": plan.SpotNotionalUSDT,
+						})
+					}
 					spotState.Quantity = plan.SpotNotionalUSDT / spotState.Price
 					spotState.ValueUSDT = plan.SpotNotionalUSDT
 				}
