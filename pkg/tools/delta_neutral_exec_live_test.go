@@ -97,6 +97,25 @@ func (m *dnFakeFutures) FetchFuturesMarkPrice(_ context.Context, _ string) (floa
 func (m *dnFakeFutures) SetFuturesLeverage(_ context.Context, _ string, _ int64, _, _ string) (map[string]interface{}, error) {
 	return nil, nil
 }
+
+// LoadFuturesMarkets returns a minimal market with contractSize=1 so contractsFromNotional
+// produces the same count as notional/markPrice (1:1 for the BTC test plan).
+func (m *dnFakeFutures) LoadFuturesMarkets(_ context.Context) (map[string]ccxt.MarketInterface, error) {
+	contractSize := 1.0
+	minAmt := 1.0
+	swap := true
+	active := true
+	return map[string]ccxt.MarketInterface{
+		"BTC/USDT:USDT": {
+			ContractSize: &contractSize,
+			Active:       &active,
+			Swap:         &swap,
+			Limits: ccxt.Limits{
+				Amount: ccxt.MinMax{Min: &minAmt},
+			},
+		},
+	}, nil
+}
 func (m *dnFakeFutures) CreateFuturesOrder(_ context.Context, _ broker.FuturesOrderRequest) (ccxt.Order, error) {
 	if m.orderErr {
 		return ccxt.Order{}, context.DeadlineExceeded

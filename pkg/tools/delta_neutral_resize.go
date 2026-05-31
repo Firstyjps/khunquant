@@ -368,7 +368,7 @@ func (t *ResizeDeltaNeutralPositionTool) resizeFuturesLeg(ctx context.Context, p
 		return false, fmt.Errorf("futures provider: %w", err)
 	}
 
-	// Fetch current mark price
+	// Fetch mark price and market metadata to compute the correct contract count.
 	markPrice, err := fp.FetchFuturesMarkPrice(ctx, plan.FuturesSymbol)
 	if err != nil {
 		return false, fmt.Errorf("fetch mark price: %w", err)
@@ -377,23 +377,44 @@ func (t *ResizeDeltaNeutralPositionTool) resizeFuturesLeg(ctx context.Context, p
 		return false, fmt.Errorf("invalid mark price: %.2f", markPrice)
 	}
 
-	// Contract size from notional
-	contractSize := notionalDelta / markPrice
+	// Derive order side and position side from plan's position side string.
+	entrySide, positionSide, err := futuresPositionSide(plan.FuturesSide)
+	if err != nil {
+		return false, fmt.Errorf("invalid futures_side %q: %w", plan.FuturesSide, err)
+	}
 
-	side := plan.FuturesSide
+	leverage := plan.FuturesLeverage
+	if leverage <= 0 {
+		leverage = 1
+	}
+
+	mkt, err := validateActiveSwapMarket(ctx, fp, plan.FuturesSymbol, int64(leverage))
+	if err != nil {
+		return false, fmt.Errorf("market validation: %w", err)
+	}
+	perContractSize := 1.0
+	if mkt.ContractSize != nil && *mkt.ContractSize > 0 {
+		perContractSize = *mkt.ContractSize
+	}
+	minAmount := 1.0
+	if mkt.Limits.Amount.Min != nil && *mkt.Limits.Amount.Min > 0 {
+		minAmount = *mkt.Limits.Amount.Min
+	}
+	numContracts, err := contractsFromNotional(notionalDelta, markPrice, perContractSize, minAmount)
+	if err != nil {
+		return false, fmt.Errorf("contract count computation: %w", err)
+	}
+
+	side := entrySide
 	reduceOnly := false
 
 	// If decrease: use reduce-only close (opposite side)
 	if isDecrease {
-		side = futuresCloseSide(plan.FuturesSide)
+		side = futuresCloseSide(positionSide)
 		reduceOnly = true
 	} else {
-		// If increase: set leverage
-		leverage := plan.FuturesLeverage
-		if leverage <= 0 {
-			leverage = 1
-		}
-		if _, err := fp.SetFuturesLeverage(ctx, plan.FuturesSymbol, int64(leverage), plan.FuturesMarginMode, plan.FuturesSide); err != nil {
+		// If increase: set leverage before entering
+		if _, err := fp.SetFuturesLeverage(ctx, plan.FuturesSymbol, int64(leverage), plan.FuturesMarginMode, positionSide); err != nil {
 			leg := &deltaneutral.ExecutionLeg{
 				ExecutionID:           exec.ID,
 				LegType:               string(deltaneutral.LegTypeFutures),
@@ -402,7 +423,7 @@ func (t *ResizeDeltaNeutralPositionTool) resizeFuturesLeg(ctx context.Context, p
 				Symbol:                plan.FuturesSymbol,
 				Side:                  side,
 				OrderType:             "market",
-				RequestedAmount:       contractSize,
+				RequestedAmount:       numContracts,
 				RequestedNotionalUSDT: notionalDelta,
 				RequestedPrice:        markPrice,
 				State:                 string(deltaneutral.LegStateFailed),
@@ -423,7 +444,7 @@ func (t *ResizeDeltaNeutralPositionTool) resizeFuturesLeg(ctx context.Context, p
 		Symbol:                plan.FuturesSymbol,
 		Side:                  side,
 		OrderType:             "market",
-		RequestedAmount:       contractSize,
+		RequestedAmount:       numContracts,
 		RequestedNotionalUSDT: notionalDelta,
 		RequestedPrice:        markPrice,
 		State:                 string(deltaneutral.LegStatePlacing),
@@ -436,8 +457,8 @@ func (t *ResizeDeltaNeutralPositionTool) resizeFuturesLeg(ctx context.Context, p
 		Symbol:       plan.FuturesSymbol,
 		OrderType:    "market",
 		Side:         side,
-		Amount:       contractSize,
-		PositionSide: plan.FuturesSide,
+		Amount:       numContracts,
+		PositionSide: positionSide,
 		ReduceOnly:   reduceOnly,
 	})
 	if err != nil {
@@ -449,7 +470,7 @@ func (t *ResizeDeltaNeutralPositionTool) resizeFuturesLeg(ctx context.Context, p
 
 	leg.OrderID = orderID(order)
 	leg.State = string(deltaneutral.LegStateFilled)
-	leg.FilledQuantity = contractSize
+	leg.FilledQuantity = numContracts
 	leg.FilledNotionalUSDT = notionalDelta
 	leg.AvgFillPrice = markPrice
 

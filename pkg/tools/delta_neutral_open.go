@@ -272,7 +272,16 @@ func (t *OpenDeltaNeutralPositionTool) executeFuturesLeg(ctx context.Context, pl
 		return false, fmt.Errorf("futures provider: %w", err)
 	}
 
-	// Use plan's notional USDT to determine contract size
+	// Derive order side ("buy"/"sell") from position side ("long"/"short").
+	// OKX requires side="sell" to open a short; passing "short" causes a 51000 error.
+	entrySide, positionSide, err := futuresPositionSide(plan.FuturesSide)
+	if err != nil {
+		return false, fmt.Errorf("invalid futures_side %q: %w", plan.FuturesSide, err)
+	}
+
+	// Fetch mark price and market metadata to compute the correct contract count.
+	// Raw notional/markPrice gives base-currency units (e.g. 1351 CHZ), but exchanges
+	// expect the number of contracts (e.g. 135 for CHZ where contractSize=10 CHZ each).
 	markPrice, err := fp.FetchFuturesMarkPrice(ctx, plan.FuturesSymbol)
 	if err != nil {
 		return false, fmt.Errorf("fetch mark price: %w", err)
@@ -281,10 +290,26 @@ func (t *OpenDeltaNeutralPositionTool) executeFuturesLeg(ctx context.Context, pl
 		return false, fmt.Errorf("invalid mark price: %.2f", markPrice)
 	}
 
-	// Simple contract calculation: notional_usdt / mark_price
-	contractSize := 1.0
-	if plan.FuturesNotionalUSDT > 0 {
-		contractSize = plan.FuturesNotionalUSDT / markPrice
+	leverage := plan.FuturesLeverage
+	if leverage <= 0 {
+		leverage = 1
+	}
+
+	mkt, err := validateActiveSwapMarket(ctx, fp, plan.FuturesSymbol, int64(leverage))
+	if err != nil {
+		return false, fmt.Errorf("market validation: %w", err)
+	}
+	perContractSize := 1.0
+	if mkt.ContractSize != nil && *mkt.ContractSize > 0 {
+		perContractSize = *mkt.ContractSize
+	}
+	minAmount := 1.0
+	if mkt.Limits.Amount.Min != nil && *mkt.Limits.Amount.Min > 0 {
+		minAmount = *mkt.Limits.Amount.Min
+	}
+	numContracts, err := contractsFromNotional(plan.FuturesNotionalUSDT, markPrice, perContractSize, minAmount)
+	if err != nil {
+		return false, fmt.Errorf("contract count computation: %w", err)
 	}
 
 	leg := &deltaneutral.ExecutionLeg{
@@ -293,9 +318,9 @@ func (t *OpenDeltaNeutralPositionTool) executeFuturesLeg(ctx context.Context, pl
 		Provider:              plan.FuturesProvider,
 		Account:               plan.FuturesAccount,
 		Symbol:                plan.FuturesSymbol,
-		Side:                  plan.FuturesSide,
+		Side:                  entrySide,
 		OrderType:             "market",
-		RequestedAmount:       contractSize,
+		RequestedAmount:       numContracts,
 		RequestedNotionalUSDT: plan.FuturesNotionalUSDT,
 		RequestedPrice:        markPrice,
 		State:                 string(deltaneutral.LegStatePlacing),
@@ -303,18 +328,7 @@ func (t *OpenDeltaNeutralPositionTool) executeFuturesLeg(ctx context.Context, pl
 		UpdatedAt:             time.Now(),
 	}
 
-	// Derive order side ("buy"/"sell") from position side ("long"/"short").
-	// OKX requires side="sell" to open a short; passing "short" causes a 51000 error.
-	entrySide, positionSide, err := futuresPositionSide(plan.FuturesSide)
-	if err != nil {
-		return false, fmt.Errorf("invalid futures_side %q: %w", plan.FuturesSide, err)
-	}
-
-	// Apply leverage before placing the futures order
-	leverage := plan.FuturesLeverage
-	if leverage <= 0 {
-		leverage = 1 // Default to 1x if not specified
-	}
+	// Apply leverage before placing the futures order.
 	if _, err := fp.SetFuturesLeverage(ctx, plan.FuturesSymbol, int64(leverage), plan.FuturesMarginMode, positionSide); err != nil {
 		leg.State = string(deltaneutral.LegStateFailed)
 		leg.ErrorMsg = fmt.Sprintf("set leverage: %v", err)
@@ -327,7 +341,7 @@ func (t *OpenDeltaNeutralPositionTool) executeFuturesLeg(ctx context.Context, pl
 		Symbol:       plan.FuturesSymbol,
 		OrderType:    "market",
 		Side:         entrySide,
-		Amount:       contractSize,
+		Amount:       numContracts,
 		PositionSide: positionSide,
 		ReduceOnly:   false,
 	})
@@ -340,7 +354,7 @@ func (t *OpenDeltaNeutralPositionTool) executeFuturesLeg(ctx context.Context, pl
 
 	leg.OrderID = orderID(order)
 	leg.State = string(deltaneutral.LegStateFilled)
-	leg.FilledQuantity = contractSize
+	leg.FilledQuantity = numContracts
 	leg.FilledNotionalUSDT = plan.FuturesNotionalUSDT
 	leg.AvgFillPrice = markPrice
 
