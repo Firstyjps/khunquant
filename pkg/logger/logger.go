@@ -2,6 +2,7 @@ package logger
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -122,6 +123,26 @@ func formatFieldValue(i any) string {
 	}
 
 	return s
+}
+
+// SetAdditionalWriter tees all console log output to w in addition to stdout.
+// Pass nil to remove the additional writer and revert to stdout-only.
+// w receives the same formatted lines that appear in the terminal.
+func SetAdditionalWriter(w io.Writer) {
+	mu.Lock()
+	defer mu.Unlock()
+	var out io.Writer
+	if w != nil {
+		out = io.MultiWriter(os.Stdout, w)
+	} else {
+		out = os.Stdout
+	}
+	consoleWriter := zerolog.ConsoleWriter{
+		Out:              out,
+		TimeFormat:       "15:04:05",
+		FormatFieldValue: formatFieldValue,
+	}
+	logger = zerolog.New(consoleWriter).With().Timestamp().Logger()
 }
 
 func SetLevel(level LogLevel) {

@@ -105,7 +105,23 @@ func registerReadOnlyTools(s *mcp.Server, d Deps) {
 		}`),
 	}, searchSessionsHandler(d))
 
-	// Tool 8: read_config — no parameters
+	// Tool 8: read_logs — gateway log lines with grep/tail/head
+	s.AddTool(&mcp.Tool{
+		Name:        "read_logs",
+		Description: "Read gateway log lines (like the WebUI Logs page). Supports tail/head/grep/level filters. Long field values (base64 etc.) are truncated to 8 chars.",
+		InputSchema: json.RawMessage(`{
+			"type":"object",
+			"properties":{
+				"tail":{"type":"integer","description":"Return last N lines (default: 50 when no filter set)"},
+				"head":{"type":"integer","description":"Return first N lines"},
+				"offset":{"type":"integer","description":"Skip first N lines before applying head/tail"},
+				"contains":{"type":"string","description":"Grep: only return lines containing this string (case-insensitive)"},
+				"level":{"type":"string","description":"Filter by log level: INF, WRN, ERR, DBG"}
+			}
+		}`),
+	}, readLogsHandler(d))
+
+	// Tool 9: read_config — no parameters
 	s.AddTool(&mcp.Tool{
 		Name:        "read_config",
 		Description: "Read the full service configuration (all secrets masked)",
@@ -587,6 +603,151 @@ func searchSessionsHandler(d Deps) mcp.ToolHandler {
 			Content: []mcp.Content{&mcp.TextContent{Text: mustJSON(output)}},
 		}, nil
 	}
+}
+
+// readLogsHandler returns gateway log lines with grep/tail/head filtering
+// and automatic truncation of long field values.
+func readLogsHandler(d Deps) mcp.ToolHandler {
+	return func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		var input struct {
+			Tail     int    `json:"tail"`
+			Head     int    `json:"head"`
+			Offset   int    `json:"offset"`
+			Contains string `json:"contains"`
+			Level    string `json:"level"`
+		}
+		if err := json.Unmarshal(req.Params.Arguments, &input); err != nil {
+			return errorResult("invalid input: " + err.Error()), nil
+		}
+
+		if d.LogBuf == nil {
+			return errorResult("log buffer not available — dev-mcp must be enabled before any logs are emitted"), nil
+		}
+
+		// Fetch all captured lines (newest first from List)
+		// Reverse to chronological order for head/tail semantics
+		newest := d.LogBuf.List(0)
+		lines := make([]string, len(newest))
+		for i := range newest {
+			lines[i] = newest[len(newest)-1-i].Text // oldest first
+		}
+
+		// Apply offset
+		if input.Offset > 0 && input.Offset < len(lines) {
+			lines = lines[input.Offset:]
+		}
+
+		// Apply level filter
+		if input.Level != "" {
+			lvl := strings.ToUpper(input.Level)
+			filtered := lines[:0]
+			for _, l := range lines {
+				if strings.Contains(l, " "+lvl+" ") || strings.Contains(l, "\x1b[") && strings.Contains(strings.ToUpper(l), lvl) {
+					filtered = append(filtered, l)
+				}
+			}
+			lines = filtered
+		}
+
+		// Apply contains filter (grep)
+		if input.Contains != "" {
+			needle := strings.ToLower(input.Contains)
+			filtered := lines[:0]
+			for _, l := range lines {
+				if strings.Contains(strings.ToLower(l), needle) {
+					filtered = append(filtered, l)
+				}
+			}
+			lines = filtered
+		}
+
+		// Apply head / tail
+		switch {
+		case input.Tail > 0 && input.Tail < len(lines):
+			lines = lines[len(lines)-input.Tail:]
+		case input.Head > 0 && input.Head < len(lines):
+			lines = lines[:input.Head]
+		case input.Tail == 0 && input.Head == 0 && input.Contains == "" && input.Level == "":
+			// default: last 50 lines
+			if len(lines) > 50 {
+				lines = lines[len(lines)-50:]
+			}
+		}
+
+		// Truncate long field values (e.g. result_b64=QmFsYW5jZXM...)
+		truncated := make([]string, len(lines))
+		for i, l := range lines {
+			truncated[i] = truncateLongValues(l)
+		}
+
+		output := map[string]interface{}{
+			"total_captured": d.LogBuf.Len(),
+			"returned":       len(truncated),
+			"lines":          truncated,
+		}
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: mustJSON(output)}},
+		}, nil
+	}
+}
+
+// truncateLongValues finds key=VALUE pairs where VALUE is longer than 20 chars
+// and truncates to 8 chars + "..." to keep log lines readable.
+// Handles both plain and ANSI-escaped log output.
+func truncateLongValues(line string) string {
+	const maxLen = 20
+	const keepLen = 8
+	// Walk the string looking for "=" followed by a run of non-space, non-"" chars
+	var out strings.Builder
+	i := 0
+	for i < len(line) {
+		eqIdx := strings.IndexByte(line[i:], '=')
+		if eqIdx < 0 {
+			out.WriteString(line[i:])
+			break
+		}
+		eqIdx += i
+		out.WriteString(line[i : eqIdx+1]) // write up to and including "="
+		i = eqIdx + 1
+		if i >= len(line) {
+			break
+		}
+		// Find end of the value token (space or end of string)
+		end := i
+		for end < len(line) && line[end] != ' ' && line[end] != '\n' && line[end] != '\t' {
+			end++
+		}
+		val := line[i:end]
+		if len(val) > maxLen {
+			// Strip ANSI codes for length check but keep them in prefix
+			plain := stripANSI(val)
+			if len(plain) > maxLen {
+				val = plain[:keepLen] + "..."
+			}
+		}
+		out.WriteString(val)
+		i = end
+	}
+	return out.String()
+}
+
+// stripANSI removes ANSI escape sequences from s.
+func stripANSI(s string) string {
+	var out strings.Builder
+	i := 0
+	for i < len(s) {
+		if s[i] == '\x1b' && i+1 < len(s) && s[i+1] == '[' {
+			i += 2
+			for i < len(s) && s[i] != 'm' {
+				i++
+			}
+			i++ // skip 'm'
+			continue
+		}
+		out.WriteByte(s[i])
+		i++
+	}
+	return out.String()
 }
 
 // readConfigHandler returns the full redacted configuration.

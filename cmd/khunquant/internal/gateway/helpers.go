@@ -67,7 +67,8 @@ type gatewayServices struct {
 	ChannelManager   *channels.Manager
 	DeviceService    *devices.Service
 	HealthServer     *health.Server
-	DebugTap         *debugtap.Store // non-nil only while dev-mcp is enabled
+	DebugTap         *debugtap.Store  // non-nil only while dev-mcp is enabled
+	LogBuf           *debugtap.LogBuffer // persists across reloads while dev-mcp is on
 }
 
 func gatewayCmd(debug bool) error {
@@ -793,6 +794,10 @@ func registerDevMCP(cfg *config.Config, services *gatewayServices, al *agent.Age
 	if !cfg.Debug.DevMCP.Enabled {
 		al.SetDebugTap(nil)
 		services.DebugTap = nil
+		if services.LogBuf != nil {
+			logger.SetAdditionalWriter(nil)
+			services.LogBuf = nil
+		}
 		return
 	}
 
@@ -809,9 +814,16 @@ func registerDevMCP(cfg *config.Config, services *gatewayServices, al *agent.Age
 	services.DebugTap = store
 	al.SetDebugTap(store)
 
+	// Reuse existing log buffer across reloads so history isn't lost on hot-reload.
+	if services.LogBuf == nil {
+		services.LogBuf = debugtap.NewLogBuffer(2000)
+		logger.SetAdditionalWriter(services.LogBuf)
+	}
+
 	handler := devmcp.NewHTTPHandler(devmcp.Deps{
 		Loop:     al,
 		DebugTap: store,
+		LogBuf:   services.LogBuf,
 		Cfg:      cfg,
 	})
 

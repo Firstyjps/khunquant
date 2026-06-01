@@ -14,6 +14,7 @@ import (
 type Deps struct {
 	Loop     *agent.AgentLoop
 	DebugTap *debugtap.Store
+	LogBuf   *debugtap.LogBuffer
 	Cfg      *config.Config
 }
 

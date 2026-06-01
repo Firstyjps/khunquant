@@ -33,6 +33,7 @@ func TestRegisteredTools_AllowlistOnly(t *testing.T) {
 		"list_sessions",
 		"read_session_history",
 		"search_sessions",
+		"read_logs",
 		"read_config",
 	}
 
@@ -45,6 +46,7 @@ func TestRegisteredTools_AllowlistOnly(t *testing.T) {
 		"list_sessions":        true,
 		"read_session_history": true,
 		"search_sessions":      true,
+		"read_logs":            true,
 		"read_config":          true,
 	}
 
@@ -74,8 +76,8 @@ func TestRegisteredTools_AllowlistOnly(t *testing.T) {
 	}
 
 	// Verify no extra tools are expected
-	if len(expectedTools) != 8 {
-		t.Errorf("expected exactly 8 tools, got %d", len(expectedTools))
+	if len(expectedTools) != 9 {
+		t.Errorf("expected exactly 9 tools, got %d", len(expectedTools))
 	}
 }
 
