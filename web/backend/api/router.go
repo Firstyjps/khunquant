@@ -98,4 +98,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 
 	// Update availability check
 	h.registerUpdateRoutes(mux)
+
+	// Developer MCP server status
+	h.registerDevMCPStatusRoutes(mux)
 }

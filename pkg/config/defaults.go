@@ -623,52 +623,6 @@ func DefaultConfig() *Config {
 				Enabled: true,
 			},
 
-			// Delta-Neutral (Track G)
-			CreateDeltaNeutralPlan: ToolConfig{
-				Enabled: true,
-			},
-			ListDeltaNeutralPlans: ToolConfig{
-				Enabled: true,
-			},
-			GetDeltaNeutralPlan: ToolConfig{
-				Enabled: true,
-			},
-			UpdateDeltaNeutralPlan: ToolConfig{
-				Enabled: true,
-			},
-			DeleteDeltaNeutralPlan: ToolConfig{
-				Enabled: true,
-			},
-			GetDeltaNeutralSummary: ToolConfig{
-				Enabled: true,
-			},
-			GetDeltaNeutralHistory: ToolConfig{
-				Enabled: true,
-			},
-			PrepareDeltaNeutralPlan: ToolConfig{
-				Enabled: true,
-			},
-			OpenDeltaNeutralPosition: ToolConfig{
-				Enabled: false,
-			},
-			UnwindDeltaNeutralPosition: ToolConfig{
-				Enabled: false,
-			},
-			ResizeDeltaNeutralPosition: ToolConfig{
-				Enabled: false,
-			},
-			ScanDeltaNeutralOpportunities: ToolConfig{
-				Enabled: true,
-			},
-
-			// Earn (Track G — Savings/Staking)
-			EarnOverview: ToolConfig{
-				Enabled: true,
-			},
-			ManageEarnPosition: ToolConfig{
-				Enabled: false,
-			},
-
 			// PnL — Profit and Loss (Track F)
 			GetPnLSummary: ToolConfig{
 				Enabled: true,
@@ -697,6 +651,14 @@ func DefaultConfig() *Config {
 		Devices: DevicesConfig{
 			Enabled:    false,
 			MonitorUSB: true,
+		},
+		Debug: DebugConfig{
+			DevMCP: DevMCPConfig{
+				Enabled:       false,
+				Token:         "",
+				MaxLogEntries: 50,
+				PathPrefix:    "/dev-mcp",
+			},
 		},
 		Voice: VoiceConfig{
 			EchoTranscription: false,

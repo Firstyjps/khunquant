@@ -241,6 +241,17 @@ func validateConfig(cfg *config.Config) []string {
 		}
 	}
 
+	// Dev MCP config validation
+	if cfg.Debug.DevMCP.MaxLogEntries < 1 {
+		cfg.Debug.DevMCP.MaxLogEntries = 1
+	}
+	if cfg.Debug.DevMCP.MaxLogEntries > 500 {
+		cfg.Debug.DevMCP.MaxLogEntries = 500
+	}
+	if cfg.Debug.DevMCP.PathPrefix != "" && !strings.HasPrefix(cfg.Debug.DevMCP.PathPrefix, "/") {
+		cfg.Debug.DevMCP.PathPrefix = "/" + cfg.Debug.DevMCP.PathPrefix
+	}
+
 	return errs
 }
 

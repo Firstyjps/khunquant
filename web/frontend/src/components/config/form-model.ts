@@ -18,6 +18,7 @@ export interface CoreConfigForm {
   followUpNudge: boolean
   allowLeverage: boolean
   paperTradingMode: boolean
+  debugDevMcpEnabled: boolean
 }
 
 export const CONTEXT_MANAGER_OPTIONS = [
@@ -92,6 +93,7 @@ export const EMPTY_FORM: CoreConfigForm = {
   followUpNudge: false,
   allowLeverage: true,
   paperTradingMode: false,
+  debugDevMcpEnabled: false,
 }
 
 export const EMPTY_LAUNCHER_FORM: LauncherForm = {
@@ -135,6 +137,8 @@ export function buildFormFromConfig(config: unknown): CoreConfigForm {
   const tools = asRecord(root.tools)
   const exec = asRecord(tools.exec)
   const tradingRisk = asRecord(root.trading_risk)
+  const debug = asRecord(root.debug)
+  const devMcp = asRecord(debug.dev_mcp)
   return {
     workspace: asString(defaults.workspace) || EMPTY_FORM.workspace,
     restrictToWorkspace:
@@ -190,6 +194,10 @@ export function buildFormFromConfig(config: unknown): CoreConfigForm {
       tradingRisk.paper_trading_mode === undefined
         ? EMPTY_FORM.paperTradingMode
         : asBool(tradingRisk.paper_trading_mode),
+    debugDevMcpEnabled:
+      devMcp.enabled === undefined
+        ? EMPTY_FORM.debugDevMcpEnabled
+        : asBool(devMcp.enabled),
   }
 }
 

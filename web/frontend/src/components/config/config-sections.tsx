@@ -440,3 +440,42 @@ export function DevicesSection({
     </ConfigSectionCard>
   )
 }
+
+interface DebugSectionProps {
+  form: CoreConfigForm
+  onFieldChange: UpdateCoreField
+}
+
+export function DebugSection({ form, onFieldChange }: DebugSectionProps) {
+  const { t } = useTranslation()
+
+  return (
+    <ConfigSectionCard
+      title={t("pages.config.sections.debug", "Debug")}
+      description={t(
+        "pages.config.sections.debug_desc",
+        "Advanced debugging and development tools.",
+      )}
+    >
+      <SwitchCardField
+        label={t("pages.config.debug_dev_mcp_enabled", "Developer MCP Server (Debug)")}
+        hint={t(
+          "pages.config.debug_dev_mcp_hint",
+          "Exposes redacted runtime data over localhost. Keep disabled in production.",
+        )}
+        layout="setting-row"
+        checked={form.debugDevMcpEnabled}
+        onCheckedChange={(checked) => onFieldChange("debugDevMcpEnabled", checked)}
+      />
+
+      {form.debugDevMcpEnabled && (
+        <div className="bg-blue-50 px-3 py-2 text-sm text-blue-700">
+          {t(
+            "pages.config.debug_dev_mcp_info",
+            "Connect MCP clients to http://127.0.0.1:18790/dev-mcp — token available in gateway logs on startup",
+          )}
+        </div>
+      )}
+    </ConfigSectionCard>
+  )
+}

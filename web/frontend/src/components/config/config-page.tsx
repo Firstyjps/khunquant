@@ -14,6 +14,7 @@ import {
 } from "@/api/system"
 import {
   AgentDefaultsSection,
+  DebugSection,
   DevicesSection,
   LauncherSection,
   RuntimeSection,
@@ -206,6 +207,11 @@ export function ConfigPage() {
             allow_leverage: form.allowLeverage,
             paper_trading_mode: form.paperTradingMode,
           },
+          debug: {
+            dev_mcp: {
+              enabled: form.debugDevMcpEnabled,
+            },
+          },
         })
 
         setBaseline(form)
@@ -314,6 +320,8 @@ export function ConfigPage() {
                 }
                 onAutoStartChange={setAutoStartEnabled}
               />
+
+              <DebugSection form={form} onFieldChange={updateField} />
 
               <div className="flex justify-end gap-2">
                 <Button

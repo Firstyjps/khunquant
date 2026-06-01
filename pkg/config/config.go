@@ -114,6 +114,7 @@ type Config struct {
 	TradingRisk TradingRiskConfig `json:"trading_risk,omitempty" yaml:"-"`
 	Heartbeat   HeartbeatConfig   `json:"heartbeat"             yaml:"-"`
 	Devices     DevicesConfig     `json:"devices"               yaml:"-"`
+	Debug       DebugConfig       `json:"debug"                 yaml:"-"`
 	Voice       VoiceConfig       `json:"voice"                 yaml:"-"`
 	BuildInfo   BuildInfo         `json:"build_info,omitempty"  yaml:"-"`
 	Update      UpdateConfig      `json:"update,omitempty"      yaml:"-"`
@@ -750,6 +751,23 @@ type DevicesConfig struct {
 
 type VoiceConfig struct {
 	EchoTranscription bool `json:"echo_transcription" env:"KHUNQUANT_VOICE_ECHO_TRANSCRIPTION"`
+}
+
+// DevMCPConfig controls the read-only developer MCP debug server.
+// This server is OFF by default and should never be enabled in shared/production
+// deployments. It exposes redacted runtime state (LLM call logs, agent context,
+// config) over a localhost-only HTTP MCP endpoint for contributor debugging.
+type DevMCPConfig struct {
+	Enabled       bool   `json:"enabled"         env:"KQ_DEV_MCP_ENABLED"`
+	Token         string `json:"token"           env:"KQ_DEV_MCP_TOKEN"`
+	MaxLogEntries int    `json:"max_log_entries" env:"KQ_DEV_MCP_MAX_LOG_ENTRIES"`
+	PathPrefix    string `json:"path_prefix"     env:"KQ_DEV_MCP_PATH_PREFIX"`
+}
+
+// DebugConfig holds developer/contributor debug tooling configuration.
+// All features here are OFF by default.
+type DebugConfig struct {
+	DevMCP DevMCPConfig `json:"dev_mcp"`
 }
 
 type ProvidersConfig struct {

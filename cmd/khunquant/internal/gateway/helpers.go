@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -32,6 +33,8 @@ import (
 	"github.com/cryptoquantumwave/khunquant/pkg/config"
 	"github.com/cryptoquantumwave/khunquant/pkg/cron"
 	"github.com/cryptoquantumwave/khunquant/pkg/dca"
+	"github.com/cryptoquantumwave/khunquant/pkg/debugtap"
+	"github.com/cryptoquantumwave/khunquant/pkg/devmcp"
 	"github.com/cryptoquantumwave/khunquant/pkg/deltaneutral"
 	"github.com/cryptoquantumwave/khunquant/pkg/devices"
 	_ "github.com/cryptoquantumwave/khunquant/pkg/exchanges/binance"
@@ -64,6 +67,8 @@ type gatewayServices struct {
 	ChannelManager   *channels.Manager
 	DeviceService    *devices.Service
 	HealthServer     *health.Server
+	DebugTap         *debugtap.Store  // non-nil only while dev-mcp is enabled
+	LogBuf           *debugtap.LogBuffer // persists across reloads while dev-mcp is on
 }
 
 func gatewayCmd(debug bool) error {
@@ -247,6 +252,9 @@ func setupAndStartServices(
 	services.HealthServer = health.NewServer(cfg.Gateway.Host, cfg.Gateway.Port)
 	services.ChannelManager.SetupHTTPServer(addr, services.HealthServer)
 	registerCronAPI(services.ChannelManager, services.CronService)
+	if cfg.Debug.DevMCP.Enabled {
+		registerDevMCP(cfg, services, agentLoop)
+	}
 
 	if err := services.ChannelManager.StartAll(context.Background()); err != nil {
 		return nil, fmt.Errorf("error starting channels: %w", err)
@@ -488,6 +496,11 @@ func restartServices(
 	services.HealthServer = health.NewServer(cfg.Gateway.Host, cfg.Gateway.Port)
 	services.ChannelManager.SetupHTTPServer(addr, services.HealthServer)
 	registerCronAPI(services.ChannelManager, services.CronService)
+	if cfg.Debug.DevMCP.Enabled {
+		registerDevMCP(cfg, services, al)
+	} else {
+		teardownDevMCP(services, al)
+	}
 
 	// Use context.Background() so channel goroutines (e.g. pico WebSocket readLoops)
 	// are not cancelled when this function returns. Channels are stopped explicitly
@@ -775,4 +788,62 @@ func setupCronTool(
 	}
 
 	return cronService
+}
+
+// registerDevMCP wires the read-only developer MCP server onto the shared
+// gateway HTTP mux. Only called when cfg.Debug.DevMCP.Enabled is true.
+// Must be called after SetupHTTPServer has created the mux on ChannelManager.
+// The mux is recreated on every reload, so the route is re-registered here each time.
+func registerDevMCP(cfg *config.Config, services *gatewayServices, al *agent.AgentLoop) {
+	// Auto-generate a token if not already configured, then persist it so the
+	// WebUI status endpoint and subsequent restarts can read the same token.
+	if cfg.Debug.DevMCP.Token == "" {
+		cfg.Debug.DevMCP.Token = generateDevMCPToken()
+		if err := config.SaveConfig(internal.GetConfigPath(), cfg); err != nil {
+			logger.WarnCF("devmcp", "Failed to persist dev-mcp token to config", map[string]any{"err": err.Error()})
+		}
+	}
+
+	store := debugtap.NewStore(cfg.Debug.DevMCP.MaxLogEntries)
+	services.DebugTap = store
+	al.SetDebugTap(store)
+
+	// Reuse the existing log buffer across reloads so history isn't lost.
+	if services.LogBuf == nil {
+		services.LogBuf = debugtap.NewLogBuffer(2000)
+		logger.SetAdditionalWriter(services.LogBuf)
+	}
+
+	handler := devmcp.NewHTTPHandler(devmcp.Deps{
+		Loop:     al,
+		DebugTap: store,
+		LogBuf:   services.LogBuf,
+		Cfg:      cfg,
+	})
+
+	prefix := cfg.Debug.DevMCP.PathPrefix
+	endpoint := fmt.Sprintf("http://%s:%d%s", cfg.Gateway.Host, cfg.Gateway.Port, prefix)
+	guarded := loopbackOnly(bearerTokenMiddleware(cfg.Debug.DevMCP.Token,
+		http.StripPrefix(prefix, handler)))
+
+	services.ChannelManager.Handle(prefix, guarded)
+	services.ChannelManager.Handle(prefix+"/", guarded)
+
+	fmt.Printf("🔌 Dev MCP: %s\n   Token:    %s\n", endpoint, cfg.Debug.DevMCP.Token)
+	logger.WarnCF("devmcp",
+		fmt.Sprintf("Developer MCP server enabled at %s — disable in production", endpoint),
+		nil)
+}
+
+// teardownDevMCP cleans up dev-MCP state when the flag is turned off.
+// It is a no-op when dev-MCP was never enabled (all fields are nil).
+func teardownDevMCP(services *gatewayServices, al *agent.AgentLoop) {
+	if services.DebugTap != nil {
+		al.SetDebugTap(nil)
+		services.DebugTap = nil
+	}
+	if services.LogBuf != nil {
+		logger.SetAdditionalWriter(nil)
+		services.LogBuf = nil
+	}
 }
