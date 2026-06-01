@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -72,18 +73,39 @@ func registerReadOnlyTools(s *mcp.Server, d Deps) {
 	// Tool 6: read_session_history — AgentID and SessionKey parameters
 	s.AddTool(&mcp.Tool{
 		Name:        "read_session_history",
-		Description: "Read conversation history and summary for a session",
+		Description: "Read conversation history for a session with grep/tail/head filtering. Use 'tail' for the most recent messages, 'contains' to grep, 'role' to filter by speaker.",
 		InputSchema: json.RawMessage(`{
 			"type":"object",
 			"properties":{
 				"agent_id":{"type":"string","description":"Agent ID (default: 'main')"},
-				"session_key":{"type":"string","description":"Session key"}
+				"session_key":{"type":"string","description":"Session key"},
+				"tail":{"type":"integer","description":"Return last N messages (like tail -n). Applied after role/contains filters."},
+				"head":{"type":"integer","description":"Return first N messages (like head -n). Applied after role/contains filters."},
+				"offset":{"type":"integer","description":"Skip first N messages before applying head/tail."},
+				"role":{"type":"string","description":"Filter by role: 'user', 'assistant', or 'tool'"},
+				"contains":{"type":"string","description":"Grep: only return messages whose content contains this string (case-insensitive)"}
 			},
 			"required":["session_key"]
 		}`),
 	}, readSessionHistoryHandler(d))
 
-	// Tool 7: read_config — no parameters
+	// Tool 7: search_sessions — grep across all sessions
+	s.AddTool(&mcp.Tool{
+		Name:        "search_sessions",
+		Description: "Grep across all sessions for an agent. Returns matching messages with their session key and index.",
+		InputSchema: json.RawMessage(`{
+			"type":"object",
+			"properties":{
+				"agent_id":{"type":"string","description":"Agent ID (default: 'main')"},
+				"contains":{"type":"string","description":"Text to search for (case-insensitive)"},
+				"role":{"type":"string","description":"Filter by role: 'user', 'assistant', or 'tool'"},
+				"limit":{"type":"integer","description":"Max results to return (default: 20)"}
+			},
+			"required":["contains"]
+		}`),
+	}, searchSessionsHandler(d))
+
+	// Tool 8: read_config — no parameters
 	s.AddTool(&mcp.Tool{
 		Name:        "read_config",
 		Description: "Read the full service configuration (all secrets masked)",
@@ -371,83 +393,199 @@ func listSessionsHandler(d Deps) mcp.ToolHandler {
 	}
 }
 
-// readSessionHistoryHandler returns conversation history and summary for a session.
+// readSessionHistoryHandler returns conversation history for a session with
+// grep/tail/head/offset/role filtering so large sessions remain navigable.
 func readSessionHistoryHandler(d Deps) mcp.ToolHandler {
 	return func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		var input struct {
 			AgentID    string `json:"agent_id"`
 			SessionKey string `json:"session_key"`
+			Tail       int    `json:"tail"`
+			Head       int    `json:"head"`
+			Offset     int    `json:"offset"`
+			Role       string `json:"role"`
+			Contains   string `json:"contains"`
 		}
 		if err := json.Unmarshal(req.Params.Arguments, &input); err != nil {
 			return errorResult("invalid input: " + err.Error()), nil
 		}
-
 		if input.AgentID == "" {
 			input.AgentID = "main"
 		}
-
 		if input.SessionKey == "" {
 			return errorResult("session_key is required"), nil
 		}
 
 		registry := d.Loop.GetRegistry()
-		agent, ok := registry.GetAgent(input.AgentID)
+		ag, ok := registry.GetAgent(input.AgentID)
 		if !ok {
 			return errorResult("agent not found: " + input.AgentID), nil
 		}
 
-		// Get history and summary
-		history := agent.Sessions.GetHistory(input.SessionKey)
-		summary := agent.Sessions.GetSummary(input.SessionKey)
+		history := ag.Sessions.GetHistory(input.SessionKey)
+		summary := ag.Sessions.GetSummary(input.SessionKey)
+		totalMessages := len(history)
 
-		// Redact message content
-		redactedMessages := make([]map[string]interface{}, 0, len(history))
-		for _, msg := range history {
-			redactedMsg := map[string]interface{}{
-				"role": msg.Role,
-			}
-
+		// Build redacted message list
+		all := make([]map[string]interface{}, 0, len(history))
+		for i, msg := range history {
+			m := map[string]interface{}{"role": msg.Role, "index": i}
 			if msg.Content != "" {
-				redactedMsg["content"] = redactPayload(msg.Content, d.Cfg)
+				m["content"] = redactPayload(msg.Content, d.Cfg)
 			}
-
 			if len(msg.ToolCalls) > 0 {
-				toolCalls := make([]map[string]interface{}, 0, len(msg.ToolCalls))
+				tcs := make([]map[string]interface{}, 0, len(msg.ToolCalls))
 				for _, tc := range msg.ToolCalls {
-					toolCall := map[string]interface{}{
-						"id":   tc.ID,
-						"name": tc.Name,
-					}
-					// Arguments is map[string]any; redact as JSON
+					t := map[string]interface{}{"id": tc.ID, "name": tc.Name}
 					if len(tc.Arguments) > 0 {
 						argsJSON, _ := json.Marshal(tc.Arguments)
-						toolCall["arguments"] = redactPayload(string(argsJSON), d.Cfg)
+						t["arguments"] = redactPayload(string(argsJSON), d.Cfg)
 					}
-					toolCalls = append(toolCalls, toolCall)
+					tcs = append(tcs, t)
 				}
-				redactedMsg["tool_calls"] = toolCalls
+				m["tool_calls"] = tcs
 			}
+			all = append(all, m)
+		}
 
-			redactedMessages = append(redactedMessages, redactedMsg)
+		// Apply offset
+		if input.Offset > 0 && input.Offset < len(all) {
+			all = all[input.Offset:]
+		}
+
+		// Apply role filter
+		if input.Role != "" {
+			filtered := all[:0]
+			for _, m := range all {
+				if strings.EqualFold(fmt.Sprintf("%v", m["role"]), input.Role) {
+					filtered = append(filtered, m)
+				}
+			}
+			all = filtered
+		}
+
+		// Apply contains filter (grep)
+		if input.Contains != "" {
+			needle := strings.ToLower(input.Contains)
+			filtered := all[:0]
+			for _, m := range all {
+				haystack := strings.ToLower(fmt.Sprintf("%v %v", m["content"], m["tool_calls"]))
+				if strings.Contains(haystack, needle) {
+					filtered = append(filtered, m)
+				}
+			}
+			all = filtered
+		}
+
+		// Apply head / tail
+		switch {
+		case input.Tail > 0 && input.Tail < len(all):
+			all = all[len(all)-input.Tail:]
+		case input.Head > 0 && input.Head < len(all):
+			all = all[:input.Head]
 		}
 
 		output := map[string]interface{}{
-			"agent_id":    input.AgentID,
-			"session_key": input.SessionKey,
-			"message_count": len(redactedMessages),
-			"summary":     redactPayload(summary, d.Cfg),
-			"history":     redactedMessages,
+			"agent_id":       input.AgentID,
+			"session_key":    input.SessionKey,
+			"total_messages": totalMessages,
+			"returned":       len(all),
+			"summary":        redactPayload(summary, d.Cfg),
+			"history":        all,
 		}
 
-		result := &mcp.CallToolResult{
-			Content: []mcp.Content{
-				&mcp.TextContent{
-					Text: mustJSON(output),
-				},
-			},
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: mustJSON(output)}},
+		}, nil
+	}
+}
+
+// searchSessionsHandler greps across all sessions for matching messages.
+func searchSessionsHandler(d Deps) mcp.ToolHandler {
+	return func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		var input struct {
+			AgentID  string `json:"agent_id"`
+			Contains string `json:"contains"`
+			Role     string `json:"role"`
+			Limit    int    `json:"limit"`
+		}
+		if err := json.Unmarshal(req.Params.Arguments, &input); err != nil {
+			return errorResult("invalid input: " + err.Error()), nil
+		}
+		if input.AgentID == "" {
+			input.AgentID = "main"
+		}
+		if input.Contains == "" {
+			return errorResult("contains is required"), nil
+		}
+		if input.Limit <= 0 {
+			input.Limit = 20
 		}
 
-		return result, nil
+		registry := d.Loop.GetRegistry()
+		ag, ok := registry.GetAgent(input.AgentID)
+		if !ok {
+			return errorResult("agent not found: " + input.AgentID), nil
+		}
+
+		needle := strings.ToLower(input.Contains)
+		type match struct {
+			SessionKey string      `json:"session_key"`
+			Index      int         `json:"index"`
+			Role       string      `json:"role"`
+			Snippet    string      `json:"snippet"`
+		}
+		var matches []match
+
+		for _, key := range ag.Sessions.ListSessions() {
+			for i, msg := range ag.Sessions.GetHistory(key) {
+				if input.Role != "" && !strings.EqualFold(msg.Role, input.Role) {
+					continue
+				}
+				content := redactPayload(msg.Content, d.Cfg)
+				if !strings.Contains(strings.ToLower(content), needle) {
+					continue
+				}
+				// Build a 200-char snippet around the match
+				lower := strings.ToLower(content)
+				idx := strings.Index(lower, needle)
+				start := idx - 80
+				if start < 0 {
+					start = 0
+				}
+				end := idx + len(needle) + 80
+				if end > len(content) {
+					end = len(content)
+				}
+				snippet := content[start:end]
+				if start > 0 {
+					snippet = "…" + snippet
+				}
+				if end < len(content) {
+					snippet = snippet + "…"
+				}
+
+				matches = append(matches, match{
+					SessionKey: key,
+					Index:      i,
+					Role:       msg.Role,
+					Snippet:    snippet,
+				})
+				if len(matches) >= input.Limit {
+					goto done
+				}
+			}
+		}
+	done:
+		output := map[string]interface{}{
+			"agent_id": input.AgentID,
+			"query":    input.Contains,
+			"count":    len(matches),
+			"matches":  matches,
+		}
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: mustJSON(output)}},
+		}, nil
 	}
 }
 
