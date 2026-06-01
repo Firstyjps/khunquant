@@ -74,7 +74,7 @@ jobs:
         run: corepack enable && corepack prepare pnpm@latest --activate
 
       - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v6
+        uses: goreleaser/goreleaser-action@v7
         with:
           distribution: goreleaser
           version: ~> v2
