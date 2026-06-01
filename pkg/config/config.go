@@ -114,6 +114,7 @@ type Config struct {
 	TradingRisk TradingRiskConfig `json:"trading_risk,omitempty" yaml:"-"`
 	Heartbeat   HeartbeatConfig   `json:"heartbeat"             yaml:"-"`
 	Devices     DevicesConfig     `json:"devices"               yaml:"-"`
+	Debug       DebugConfig       `json:"debug"                 yaml:"-"`
 	Voice       VoiceConfig       `json:"voice"                 yaml:"-"`
 	BuildInfo   BuildInfo         `json:"build_info,omitempty"  yaml:"-"`
 	Update      UpdateConfig      `json:"update,omitempty"      yaml:"-"`
@@ -748,6 +749,23 @@ type DevicesConfig struct {
 	MonitorUSB bool `json:"monitor_usb" env:"KHUNQUANT_DEVICES_MONITOR_USB"`
 }
 
+// DevMCPConfig controls the read-only developer MCP debug server.
+// This server is OFF by default and should never be enabled in shared/production
+// deployments. It exposes redacted runtime state (LLM call logs, agent context,
+// config) over a localhost-only HTTP MCP endpoint for contributor debugging.
+type DevMCPConfig struct {
+	Enabled       bool   `json:"enabled"         env:"KQ_DEV_MCP_ENABLED"`
+	Token         string `json:"token"           env:"KQ_DEV_MCP_TOKEN"`
+	MaxLogEntries int    `json:"max_log_entries" env:"KQ_DEV_MCP_MAX_LOG_ENTRIES"`
+	PathPrefix    string `json:"path_prefix"     env:"KQ_DEV_MCP_PATH_PREFIX"`
+}
+
+// DebugConfig holds developer/contributor debug tooling configuration.
+// All features here are OFF by default.
+type DebugConfig struct {
+	DevMCP DevMCPConfig `json:"dev_mcp"`
+}
+
 type VoiceConfig struct {
 	EchoTranscription bool `json:"echo_transcription" env:"KHUNQUANT_VOICE_ECHO_TRANSCRIPTION"`
 }
@@ -1038,19 +1056,19 @@ type ToolsConfig struct {
 	GetOrderRateStatus ToolConfig `json:"get_order_rate_status" envPrefix:"KHUNQUANT_TOOLS_GET_ORDER_RATE_STATUS_"`
 
 	// Futures / perpetual swaps (Track B2)
-	FuturesSetLeverage        ToolConfig `json:"futures_set_leverage"       envPrefix:"KHUNQUANT_TOOLS_FUTURES_SET_LEVERAGE_"`
-	FuturesOpenPosition       ToolConfig `json:"futures_open_position"      envPrefix:"KHUNQUANT_TOOLS_FUTURES_OPEN_POSITION_"`
-	FuturesGetOrder           ToolConfig `json:"futures_get_order"          envPrefix:"KHUNQUANT_TOOLS_FUTURES_GET_ORDER_"`
-	FuturesGetPositions       ToolConfig `json:"futures_get_positions"      envPrefix:"KHUNQUANT_TOOLS_FUTURES_GET_POSITIONS_"`
-	FuturesGetFunding         ToolConfig `json:"futures_get_funding"        envPrefix:"KHUNQUANT_TOOLS_FUTURES_GET_FUNDING_"`
-	FuturesValidateMarket     ToolConfig `json:"futures_validate_market"    envPrefix:"KHUNQUANT_TOOLS_FUTURES_VALIDATE_MARKET_"`
-	FuturesRiskSummary        ToolConfig `json:"futures_risk_summary"       envPrefix:"KHUNQUANT_TOOLS_FUTURES_RISK_SUMMARY_"`
+	FuturesSetLeverage       ToolConfig `json:"futures_set_leverage"       envPrefix:"KHUNQUANT_TOOLS_FUTURES_SET_LEVERAGE_"`
+	FuturesOpenPosition      ToolConfig `json:"futures_open_position"      envPrefix:"KHUNQUANT_TOOLS_FUTURES_OPEN_POSITION_"`
+	FuturesGetOrder          ToolConfig `json:"futures_get_order"          envPrefix:"KHUNQUANT_TOOLS_FUTURES_GET_ORDER_"`
+	FuturesGetPositions      ToolConfig `json:"futures_get_positions"      envPrefix:"KHUNQUANT_TOOLS_FUTURES_GET_POSITIONS_"`
+	FuturesGetFunding        ToolConfig `json:"futures_get_funding"        envPrefix:"KHUNQUANT_TOOLS_FUTURES_GET_FUNDING_"`
+	FuturesValidateMarket    ToolConfig `json:"futures_validate_market"    envPrefix:"KHUNQUANT_TOOLS_FUTURES_VALIDATE_MARKET_"`
+	FuturesRiskSummary       ToolConfig `json:"futures_risk_summary"       envPrefix:"KHUNQUANT_TOOLS_FUTURES_RISK_SUMMARY_"`
 	FuturesEstimateFundingFee ToolConfig `json:"futures_estimate_funding_fee" envPrefix:"KHUNQUANT_TOOLS_FUTURES_ESTIMATE_FUNDING_FEE_"`
-	FuturesClosePosition      ToolConfig `json:"futures_close_position"     envPrefix:"KHUNQUANT_TOOLS_FUTURES_CLOSE_POSITION_"`
-	FuturesReducePosition     ToolConfig `json:"futures_reduce_position"    envPrefix:"KHUNQUANT_TOOLS_FUTURES_REDUCE_POSITION_"`
-	FuturesModifyProtection   ToolConfig `json:"futures_modify_protection"  envPrefix:"KHUNQUANT_TOOLS_FUTURES_MODIFY_PROTECTION_"`
-	FuturesCancelOrders       ToolConfig `json:"futures_cancel_orders"      envPrefix:"KHUNQUANT_TOOLS_FUTURES_CANCEL_ORDERS_"`
-	FuturesEmergencyFlatten   ToolConfig `json:"futures_emergency_flatten"  envPrefix:"KHUNQUANT_TOOLS_FUTURES_EMERGENCY_FLATTEN_"`
+	FuturesClosePosition     ToolConfig `json:"futures_close_position"     envPrefix:"KHUNQUANT_TOOLS_FUTURES_CLOSE_POSITION_"`
+	FuturesReducePosition    ToolConfig `json:"futures_reduce_position"    envPrefix:"KHUNQUANT_TOOLS_FUTURES_REDUCE_POSITION_"`
+	FuturesModifyProtection  ToolConfig `json:"futures_modify_protection"  envPrefix:"KHUNQUANT_TOOLS_FUTURES_MODIFY_PROTECTION_"`
+	FuturesCancelOrders      ToolConfig `json:"futures_cancel_orders"      envPrefix:"KHUNQUANT_TOOLS_FUTURES_CANCEL_ORDERS_"`
+	FuturesEmergencyFlatten  ToolConfig `json:"futures_emergency_flatten"  envPrefix:"KHUNQUANT_TOOLS_FUTURES_EMERGENCY_FLATTEN_"`
 
 	// Technical analysis tools (Track C)
 	CalculateIndicators ToolConfig `json:"calculate_indicators" envPrefix:"KHUNQUANT_TOOLS_CALCULATE_INDICATORS_"`
@@ -1070,24 +1088,6 @@ type ToolsConfig struct {
 	ExecuteDCAOrder ToolConfig `json:"execute_dca_order" envPrefix:"KHUNQUANT_TOOLS_EXECUTE_DCA_ORDER_"`
 	GetDCAHistory   ToolConfig `json:"get_dca_history"   envPrefix:"KHUNQUANT_TOOLS_GET_DCA_HISTORY_"`
 	GetDCASummary   ToolConfig `json:"get_dca_summary"   envPrefix:"KHUNQUANT_TOOLS_GET_DCA_SUMMARY_"`
-
-	// Delta-Neutral (Track G)
-	CreateDeltaNeutralPlan        ToolConfig `json:"create_delta_neutral_plan"   envPrefix:"KHUNQUANT_TOOLS_CREATE_DELTA_NEUTRAL_PLAN_"`
-	ListDeltaNeutralPlans         ToolConfig `json:"list_delta_neutral_plans"    envPrefix:"KHUNQUANT_TOOLS_LIST_DELTA_NEUTRAL_PLANS_"`
-	GetDeltaNeutralPlan           ToolConfig `json:"get_delta_neutral_plan"      envPrefix:"KHUNQUANT_TOOLS_GET_DELTA_NEUTRAL_PLAN_"`
-	UpdateDeltaNeutralPlan        ToolConfig `json:"update_delta_neutral_plan"   envPrefix:"KHUNQUANT_TOOLS_UPDATE_DELTA_NEUTRAL_PLAN_"`
-	DeleteDeltaNeutralPlan        ToolConfig `json:"delete_delta_neutral_plan"   envPrefix:"KHUNQUANT_TOOLS_DELETE_DELTA_NEUTRAL_PLAN_"`
-	GetDeltaNeutralSummary        ToolConfig `json:"get_delta_neutral_summary"   envPrefix:"KHUNQUANT_TOOLS_GET_DELTA_NEUTRAL_SUMMARY_"`
-	GetDeltaNeutralHistory        ToolConfig `json:"get_delta_neutral_history"   envPrefix:"KHUNQUANT_TOOLS_GET_DELTA_NEUTRAL_HISTORY_"`
-	PrepareDeltaNeutralPlan       ToolConfig `json:"prepare_delta_neutral_plan"  envPrefix:"KHUNQUANT_TOOLS_PREPARE_DELTA_NEUTRAL_PLAN_"`
-	OpenDeltaNeutralPosition      ToolConfig `json:"open_delta_neutral_position" envPrefix:"KHUNQUANT_TOOLS_OPEN_DELTA_NEUTRAL_POSITION_"`
-	UnwindDeltaNeutralPosition    ToolConfig `json:"unwind_delta_neutral_position" envPrefix:"KHUNQUANT_TOOLS_UNWIND_DELTA_NEUTRAL_POSITION_"`
-	ResizeDeltaNeutralPosition    ToolConfig `json:"resize_delta_neutral_position" envPrefix:"KHUNQUANT_TOOLS_RESIZE_DELTA_NEUTRAL_POSITION_"`
-	ScanDeltaNeutralOpportunities ToolConfig `json:"scan_delta_neutral_opportunities" envPrefix:"KHUNQUANT_TOOLS_SCAN_DELTA_NEUTRAL_OPPORTUNITIES_"`
-
-	// Earn (Track G — Savings/Staking)
-	EarnOverview       ToolConfig `json:"earn_overview"        envPrefix:"KHUNQUANT_TOOLS_EARN_OVERVIEW_"`
-	ManageEarnPosition ToolConfig `json:"manage_earn_position" envPrefix:"KHUNQUANT_TOOLS_MANAGE_EARN_POSITION_"`
 
 	// PnL — Profit and Loss (Track F)
 	GetPnLSummary ToolConfig `json:"get_pnl_summary" envPrefix:"KHUNQUANT_TOOLS_GET_PNL_SUMMARY_"`
@@ -1588,34 +1588,6 @@ func (t *ToolsConfig) IsToolEnabled(name string) bool {
 		return t.GetDCAHistory.Enabled
 	case "get_dca_summary":
 		return t.GetDCASummary.Enabled
-	case "create_delta_neutral_plan":
-		return t.CreateDeltaNeutralPlan.Enabled
-	case "list_delta_neutral_plans":
-		return t.ListDeltaNeutralPlans.Enabled
-	case "get_delta_neutral_plan":
-		return t.GetDeltaNeutralPlan.Enabled
-	case "update_delta_neutral_plan":
-		return t.UpdateDeltaNeutralPlan.Enabled
-	case "delete_delta_neutral_plan":
-		return t.DeleteDeltaNeutralPlan.Enabled
-	case "get_delta_neutral_summary":
-		return t.GetDeltaNeutralSummary.Enabled
-	case "get_delta_neutral_history":
-		return t.GetDeltaNeutralHistory.Enabled
-	case "prepare_delta_neutral_plan":
-		return t.PrepareDeltaNeutralPlan.Enabled
-	case "open_delta_neutral_position":
-		return t.OpenDeltaNeutralPosition.Enabled
-	case "unwind_delta_neutral_position":
-		return t.UnwindDeltaNeutralPosition.Enabled
-	case "resize_delta_neutral_position":
-		return t.ResizeDeltaNeutralPosition.Enabled
-	case "scan_delta_neutral_opportunities":
-		return t.ScanDeltaNeutralOpportunities.Enabled
-	case "earn_overview":
-		return t.EarnOverview.Enabled
-	case "manage_earn_position":
-		return t.ManageEarnPosition.Enabled
 	case "get_pnl_summary":
 		return t.GetPnLSummary.Enabled
 	case "get_pnl_detail":

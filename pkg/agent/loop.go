@@ -24,6 +24,7 @@ import (
 	"github.com/cryptoquantumwave/khunquant/pkg/commands"
 	"github.com/cryptoquantumwave/khunquant/pkg/config"
 	"github.com/cryptoquantumwave/khunquant/pkg/constants"
+	"github.com/cryptoquantumwave/khunquant/pkg/debugtap"
 	"github.com/cryptoquantumwave/khunquant/pkg/logger"
 	"github.com/cryptoquantumwave/khunquant/pkg/media"
 	"github.com/cryptoquantumwave/khunquant/pkg/providers"
@@ -54,6 +55,7 @@ type AgentLoop struct {
 	mu               sync.RWMutex
 	// Track active requests for safe provider cleanup
 	activeRequests sync.WaitGroup
+	debugTap       *debugtap.Store // nil when dev-mcp is disabled; set via SetDebugTap
 }
 
 // processOptions configures how a message is processed
@@ -820,6 +822,13 @@ func (al *AgentLoop) RecordLastChatID(chatID string) error {
 	return al.state.SetLastChatID(chatID)
 }
 
+// SetDebugTap attaches (or detaches when nil) the dev-MCP debug tap store.
+// Thread-safe: the field is written under no lock since it's only set during
+// gateway startup/reload (single-goroutine) before the loop runs.
+func (al *AgentLoop) SetDebugTap(store *debugtap.Store) {
+	al.debugTap = store
+}
+
 func (al *AgentLoop) ProcessDirect(
 	ctx context.Context,
 	content, sessionKey string,
@@ -1466,6 +1475,8 @@ func (al *AgentLoop) runLLMIteration(
 			al.activeRequests.Add(1)
 			defer al.activeRequests.Done()
 
+			start := time.Now()
+
 			if len(activeCandidates) > 1 && al.fallback != nil {
 				fbResult, fbErr := al.fallback.Execute(
 					ctx,
@@ -1479,6 +1490,21 @@ func (al *AgentLoop) runLLMIteration(
 					},
 				)
 				if fbErr != nil {
+					if al.debugTap != nil {
+						errStr := fbErr.Error()
+						al.debugTap.Record(debugtap.Entry{
+							Timestamp:  start,
+							AgentID:    agent.ID,
+							SessionKey: opts.SessionKey,
+							Provider:   "", // fallback doesn't track provider name in the error case
+							Model:      activeModel,
+							Messages:   messages,
+							Tools:      providerToolDefs,
+							Response:   nil,
+							Err:        errStr,
+							DurationMS: time.Since(start).Milliseconds(),
+						})
+					}
 					return nil, fbErr
 				}
 				if fbResult.Provider != "" && len(fbResult.Attempts) > 0 {
@@ -1489,9 +1515,46 @@ func (al *AgentLoop) runLLMIteration(
 						map[string]any{"agent_id": agent.ID, "iteration": iteration},
 					)
 				}
+				if al.debugTap != nil {
+					al.debugTap.Record(debugtap.Entry{
+						Timestamp:  start,
+						AgentID:    agent.ID,
+						SessionKey: opts.SessionKey,
+						Provider:   fbResult.Provider,
+						Model:      fbResult.Model,
+						Messages:   messages,
+						Tools:      providerToolDefs,
+						Response:   fbResult.Response,
+						Err:        "",
+						DurationMS: time.Since(start).Milliseconds(),
+					})
+				}
 				return fbResult.Response, nil
 			}
-			return activeProvider.Chat(ctx, messages, providerToolDefs, activeModel, llmOpts)
+			response, err := activeProvider.Chat(ctx, messages, providerToolDefs, activeModel, llmOpts)
+			if al.debugTap != nil {
+				errStr := ""
+				if err != nil {
+					errStr = err.Error()
+				}
+				providerName := ""
+				if p, ok := agent.Provider.(interface{ Name() string }); ok {
+					providerName = p.Name()
+				}
+				al.debugTap.Record(debugtap.Entry{
+					Timestamp:  start,
+					AgentID:    agent.ID,
+					SessionKey: opts.SessionKey,
+					Provider:   providerName,
+					Model:      activeModel,
+					Messages:   messages,
+					Tools:      providerToolDefs,
+					Response:   response,
+					Err:        errStr,
+					DurationMS: time.Since(start).Milliseconds(),
+				})
+			}
+			return response, err
 		}
 
 		// Retry loop for context/token errors
