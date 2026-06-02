@@ -137,6 +137,7 @@ type opportunityRow struct {
 	combinedApy          float64  // apr + earn APY (percent); equals apr when earn unknown
 	fundingPeriodsPerDay float64  // for 14d APR calculation
 	earnProductID        string   // productID for rate-history fetch
+	earnProductType      string   // "savings" or "staking-defi"; governs 14d history source
 	earn14dMean          *float64 // trailing-14d average earn rate (percent); nil = unknown
 	apr14d               *float64 // trailing-14d average funding APR (percent); nil if no history
 	combined14d          *float64 // 14d APR + 14d Earn (percent); nil if both not present
@@ -251,20 +252,22 @@ func (t *ScanDeltaNeutralOpportunitiesTool) Execute(ctx context.Context, args ma
 				continue
 			}
 
-			// Build maps: UPPERCASE asset -> best APY (fraction) and -> ProductID.
+			// Build maps: UPPERCASE asset -> best APY (fraction), ProductID, and Type.
 			// When multiple products exist for the same asset (e.g. savings + staking-defi),
 			// keep the one with the higher APY so the scanner shows the best available rate.
 			assetToAPY := make(map[string]float64)
 			assetToProductID := make(map[string]string)
+			assetToProductType := make(map[string]string)
 			for _, prod := range products {
 				ua := strings.ToUpper(prod.Asset)
 				if prod.APY > assetToAPY[ua] {
 					assetToAPY[ua] = prod.APY
 					assetToProductID[ua] = prod.ProductID
+					assetToProductType[ua] = prod.Type
 				}
 			}
 
-			// Set earnApy + earnProductID for each row of this exchange.
+			// Set earnApy + earnProductID + earnProductType for each row of this exchange.
 			for i := range opportunities {
 				if opportunities[i].exchange == prov {
 					ua := strings.ToUpper(opportunities[i].asset)
@@ -272,6 +275,7 @@ func (t *ScanDeltaNeutralOpportunitiesTool) Execute(ctx context.Context, args ma
 						apyPercent := apy * 100
 						opportunities[i].earnApy = &apyPercent
 						opportunities[i].earnProductID = assetToProductID[ua]
+						opportunities[i].earnProductType = assetToProductType[ua]
 					}
 				}
 			}
@@ -326,6 +330,17 @@ func (t *ScanDeltaNeutralOpportunitiesTool) Execute(ctx context.Context, args ma
 				i := i // capture
 				if opportunities[i].earnProductID == "" {
 					continue // No earn product for this row.
+				}
+
+				// staking-defi has a fixed APY with no public rate-history endpoint.
+				// Use the current spot APY as the flat 14d value so the 14d column
+				// reflects the same rate rather than falling back to savings history.
+				if opportunities[i].earnProductType == "staking-defi" {
+					if opportunities[i].earnApy != nil {
+						v := *opportunities[i].earnApy
+						opportunities[i].earn14dMean = &v
+					}
+					continue
 				}
 
 				prov := opportunities[i].exchange

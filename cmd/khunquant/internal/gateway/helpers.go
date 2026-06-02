@@ -752,7 +752,8 @@ func setupCronTool(
 		cfg.Tools.IsToolEnabled("get_delta_neutral_history") ||
 		cfg.Tools.IsToolEnabled("prepare_delta_neutral_plan") ||
 		cfg.Tools.IsToolEnabled("open_delta_neutral_position") ||
-		cfg.Tools.IsToolEnabled("unwind_delta_neutral_position")
+		cfg.Tools.IsToolEnabled("unwind_delta_neutral_position") ||
+		cfg.Tools.IsToolEnabled("render_delta_neutral_yield_chart")
 	if dnEnabled && dnStore != nil {
 		if cfg.Tools.IsToolEnabled("create_delta_neutral_plan") {
 			agentLoop.RegisterTool(tools.NewCreateDeltaNeutralPlanTool(cfg, dnStore, cronService))
@@ -761,7 +762,7 @@ func setupCronTool(
 			agentLoop.RegisterTool(tools.NewListDeltaNeutralPlansTool(dnStore))
 		}
 		if cfg.Tools.IsToolEnabled("get_delta_neutral_plan") {
-			agentLoop.RegisterTool(tools.NewGetDeltaNeutralPlanTool(dnStore))
+			agentLoop.RegisterTool(tools.NewGetDeltaNeutralPlanTool(cfg, dnStore))
 		}
 		if cfg.Tools.IsToolEnabled("update_delta_neutral_plan") {
 			agentLoop.RegisterTool(tools.NewUpdateDeltaNeutralPlanTool(cfg, dnStore, cronService))
@@ -770,7 +771,7 @@ func setupCronTool(
 			agentLoop.RegisterTool(tools.NewDeleteDeltaNeutralPlanTool(dnStore, cronService))
 		}
 		if cfg.Tools.IsToolEnabled("get_delta_neutral_summary") {
-			agentLoop.RegisterTool(tools.NewGetDeltaNeutralSummaryTool(dnStore))
+			agentLoop.RegisterTool(tools.NewGetDeltaNeutralSummaryTool(cfg, dnStore))
 		}
 		if cfg.Tools.IsToolEnabled("get_delta_neutral_history") {
 			agentLoop.RegisterTool(tools.NewGetDeltaNeutralHistoryTool(dnStore))
@@ -786,6 +787,9 @@ func setupCronTool(
 		}
 		if cfg.Tools.IsToolEnabled("resize_delta_neutral_position") {
 			agentLoop.RegisterTool(tools.NewResizeDeltaNeutralPositionTool(cfg, dnStore))
+		}
+		if cfg.Tools.IsToolEnabled("render_delta_neutral_yield_chart") {
+			agentLoop.RegisterTool(tools.NewRenderDeltaNeutralYieldChartTool(dnStore))
 		}
 	}
 

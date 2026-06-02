@@ -326,7 +326,7 @@ func TestGetDeltaNeutralSummaryTool(t *testing.T) {
 	}
 	planID, _ := store.SavePlan(context.Background(), plan)
 
-	tool := NewGetDeltaNeutralSummaryTool(store)
+	tool := NewGetDeltaNeutralSummaryTool(nil, store)
 	args := map[string]any{
 		"plan_id": float64(planID),
 	}

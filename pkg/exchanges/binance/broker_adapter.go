@@ -240,6 +240,9 @@ func (a *BinanceBrokerAdapter) SetFuturesLeverage(_ context.Context, symbol stri
 	if positionSide != "" {
 		params["positionSide"] = strings.ToUpper(positionSide)
 	}
+	logger.DebugCF("binance-leverage", "SetFuturesLeverage request", map[string]any{
+		"symbol": symbol, "leverage": leverage, "marginMode": marginMode, "positionSide": positionSide,
+	})
 	if marginMode != "" {
 		// Binance requires margin mode to be changed with a separate endpoint.
 		marginErr := catchPanic(func() error {
@@ -247,6 +250,9 @@ func (a *BinanceBrokerAdapter) SetFuturesLeverage(_ context.Context, symbol stri
 			return err
 		})
 		if marginErr != nil && !strings.Contains(strings.ToLower(marginErr.Error()), "no need to change margin type") {
+			logger.WarnCF("binance-leverage", "SetMarginMode failed", map[string]any{
+				"symbol": symbol, "marginMode": marginMode, "error": marginErr.Error(),
+			})
 			return nil, fmt.Errorf("binance futures: set margin mode: %w", marginErr)
 		}
 	}
@@ -263,7 +269,15 @@ func (a *BinanceBrokerAdapter) SetFuturesLeverage(_ context.Context, symbol stri
 		return nil
 	})
 	if err != nil {
+		logger.WarnCF("binance-leverage", "SetFuturesLeverage failed", map[string]any{
+			"symbol": symbol, "leverage": leverage, "error": err.Error(),
+		})
 		return nil, fmt.Errorf("binance futures: set leverage: %w", err)
+	}
+	if len(out) > 0 {
+		logger.InfoCF("binance-leverage", "SetFuturesLeverage response", map[string]any{
+			"symbol": symbol, "response": out,
+		})
 	}
 	return out, nil
 }

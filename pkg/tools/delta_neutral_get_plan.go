@@ -4,16 +4,18 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/cryptoquantumwave/khunquant/pkg/config"
 	"github.com/cryptoquantumwave/khunquant/pkg/deltaneutral"
 )
 
 // GetDeltaNeutralPlanTool retrieves a single delta-neutral plan with its latest snapshot.
 type GetDeltaNeutralPlanTool struct {
 	store *deltaneutral.Store
+	cfg   *config.Config
 }
 
-func NewGetDeltaNeutralPlanTool(store *deltaneutral.Store) *GetDeltaNeutralPlanTool {
-	return &GetDeltaNeutralPlanTool{store: store}
+func NewGetDeltaNeutralPlanTool(cfg *config.Config, store *deltaneutral.Store) *GetDeltaNeutralPlanTool {
+	return &GetDeltaNeutralPlanTool{store: store, cfg: cfg}
 }
 
 func (t *GetDeltaNeutralPlanTool) Name() string { return NameGetDeltaNeutralPlan }
@@ -79,13 +81,22 @@ func (t *GetDeltaNeutralPlanTool) Execute(ctx context.Context, args map[string]a
 	out += fmt.Sprintf("  Futures notional:   %.2f USDT\n", plan.FuturesNotionalUSDT)
 	out += fmt.Sprintf("  Reserve margin:     %.2f USDT\n", plan.ReserveMarginUSDT)
 	out += "\n"
+	costs := estimateCosts(*plan, snapshot)
 	out += fmt.Sprintf("Monitoring & Costs:\n")
 	out += fmt.Sprintf("  Monitor interval:   %s\n", plan.MonitorInterval)
 	out += fmt.Sprintf("  Cron job ID:        %s\n", plan.CronJobID)
-	out += fmt.Sprintf("  Estimated entry:    %.4f USDT\n", plan.EstimatedEntryCostUSDT)
-	out += fmt.Sprintf("  Estimated exit:     %.4f USDT\n", plan.EstimatedExitCostUSDT)
-	out += fmt.Sprintf("  Expected daily funding: %.4f USDT\n", plan.ExpectedDailyFundingUSDT)
-	out += fmt.Sprintf("  Breakeven days:     %.2f\n", plan.BreakevenDays)
+	out += fmt.Sprintf("  Estimated entry:    %.4f USDT\n", costs.EntryCostUSDT)
+	out += fmt.Sprintf("  Estimated exit:     %.4f USDT\n", costs.ExitCostUSDT)
+	if costs.DailyFundingUSDT > 0 {
+		out += fmt.Sprintf("  Daily funding:      %.4f USDT\n", costs.DailyFundingUSDT)
+		out += fmt.Sprintf("  Daily earn:         %.4f USDT\n", costs.DailyEarnUSDT)
+		out += fmt.Sprintf("  Daily combined:     %.4f USDT\n", costs.DailyCombinedUSDT)
+		out += fmt.Sprintf("  Breakeven (funding only):   %.2f days\n", costs.BreakevenFundingDays)
+		out += fmt.Sprintf("  Breakeven (funding + earn): %.2f days\n", costs.BreakevenCombinedDays)
+	} else {
+		out += "  Daily funding/earn: n/a (no snapshot yet)\n"
+		out += "  Breakeven days:     n/a\n"
+	}
 	out += "\n"
 	out += fmt.Sprintf("Configuration:\n")
 	out += fmt.Sprintf("  Cross-exchange:     %v\n", plan.CrossExchange)
@@ -109,12 +120,23 @@ func (t *GetDeltaNeutralPlanTool) Execute(ctx context.Context, args map[string]a
 		out += fmt.Sprintf("  Current funding:    %.4f%% (est next: %.4f USDT)\n", snapshot.CurrentFundingRate*100, snapshot.EstimatedNextFundingUSDT)
 		out += fmt.Sprintf("  Liquidation dist:   %.2f%% (price: %.4f)\n", snapshot.LiquidationDistancePct, snapshot.LiquidationPrice)
 		out += fmt.Sprintf("  Margin ratio:       %.2f%% (%s)\n", snapshot.MarginRatioPct, snapshot.MarginState)
+
+		spotPnL := snapshot.SpotValueUSDT - plan.SpotNotionalUSDT
+		netPnL := snapshot.FuturesUnrealizedPnLUSDT + spotPnL
+		out += fmt.Sprintf("  Spot leg:           value %.4f USDT  entry notional %.4f USDT  spot PnL %+.4f USDT\n",
+			snapshot.SpotValueUSDT, plan.SpotNotionalUSDT, spotPnL)
+		out += fmt.Sprintf("  Futures leg upl:    %+.4f USDT  (short mark-to-market via OKX upl field)\n", snapshot.FuturesUnrealizedPnLUSDT)
+		out += fmt.Sprintf("  Net unrealized:     %+.4f USDT  (spot + futures; delta-neutral target ≈ 0)\n", netPnL)
 		out += fmt.Sprintf("  Threshold breached: %v\n", snapshot.ThresholdBreached)
 		if snapshot.ThresholdBreached && len(snapshot.BreachCodes) > 0 {
 			out += fmt.Sprintf("  Breach codes:       %v\n", snapshot.BreachCodes)
 		}
 	} else {
-		out += "\nLatest Snapshot: None (monitoring has not yet executed)\n"
+		out += "\nLatest Snapshot: None (plan not yet opened)\n"
+		if t.cfg != nil {
+			proj := FetchLiveProjection(ctx, t.cfg, *plan)
+			out += "\n" + FormatLiveProjection(proj)
+		}
 	}
 
 	if alert != nil {
@@ -126,6 +148,10 @@ func (t *GetDeltaNeutralPlanTool) Execute(ctx context.Context, args map[string]a
 		if alert.RecommendedAction != "" {
 			out += fmt.Sprintf("  Recommendation:     %s\n", alert.RecommendedAction)
 		}
+	}
+
+	if digest := formatYieldDigest(yieldDigest(ctx, t.store, planID)); digest != "" {
+		out += "\n" + digest
 	}
 
 	return UserResult(out)

@@ -70,20 +70,29 @@ func okxData(res interface{}) []map[string]interface{} {
 // --- broker.EarnProvider ---
 
 // FetchFlexibleEarnProducts returns OKX earn products from two sources:
-//  1. Simple Earn Flexible / Savings (public): /api/v5/finance/savings/lending-rate-summary
+//  1. Simple Earn Flexible / Savings (public): /api/v5/finance/savings/lending-rate-history
 //  2. On-chain Earn / DeFi (requires auth): /api/v5/finance/staking-defi/offers
 //
 // asset == "" returns all currencies. APY is already a fraction (0.05 == 5%).
+// We use lending-rate-history (lendingRate field) rather than lending-rate-summary
+// (estRate) because estRate is the borrowing-demand threshold (~2x actual), while
+// lendingRate is the rate actually settled and paid to lenders — matching what
+// the OKX app displays as "past hour APR".
 func (a *OKXBrokerAdapter) FetchFlexibleEarnProducts(_ context.Context, asset string) ([]broker.EarnProduct, error) {
 	var products []broker.EarnProduct
 
 	// ── Source 1: Savings / Simple Earn Flexible (public endpoint) ────────
+	// Use lending-rate-history with limit=1 to get the most recent settled
+	// lendingRate for each currency. When asset=="", OKX returns all currencies
+	// for the latest settlement period regardless of the limit parameter.
 	_ = catchPanic(func() error {
-		params := map[string]interface{}{}
+		params := map[string]interface{}{
+			"limit": "1",
+		}
 		if asset != "" {
 			params["ccy"] = asset
 		}
-		res := <-a.publicClient.Core.PublicGetFinanceSavingsLendingRateSummary(params)
+		res := <-a.publicClient.Core.PublicGetFinanceSavingsLendingRateHistory(params)
 		if ccxt.IsError(res) {
 			return ccxt.CreateReturnError(res)
 		}
@@ -92,7 +101,7 @@ func (a *OKXBrokerAdapter) FetchFlexibleEarnProducts(_ context.Context, asset st
 				Exchange:     Name,
 				Asset:        okxString(row["ccy"]),
 				ProductID:    okxString(row["ccy"]),
-				APY:          okxFloat(row["estRate"]),
+				APY:          okxFloat(row["lendingRate"]),
 				CanSubscribe: true,
 				Type:         "savings",
 			})
@@ -358,8 +367,8 @@ func (a *OKXBrokerAdapter) SetFlexibleAutoSubscribe(_ context.Context, _ /*produ
 
 // FetchFlexibleEarnRateHistory returns historical rate data for a flexible savings currency.
 // Calls /api/v5/finance/savings/lending-rate-history (PUBLIC endpoint).
-// The response rate is already a fraction (0.05 == 5% APY). productID is ignored for OKX
-// (savings are keyed by currency). asset is required.
+// Uses lendingRate (actual settled rate paid to lenders), not rate (borrowing threshold).
+// Already a fraction (0.05 == 5% APY). productID is ignored for OKX (keyed by currency).
 func (a *OKXBrokerAdapter) FetchFlexibleEarnRateHistory(ctx context.Context, productID, asset string, since *int64, limit int) ([]broker.EarnRatePoint, error) {
 	var points []broker.EarnRatePoint
 	err := catchPanic(func() error {
@@ -372,7 +381,7 @@ func (a *OKXBrokerAdapter) FetchFlexibleEarnRateHistory(ctx context.Context, pro
 			return ccxt.CreateReturnError(res)
 		}
 		for _, row := range okxData(res) {
-			rate := okxFloat(row["rate"])
+			rate := okxFloat(row["lendingRate"])
 			timestamp := int64(okxFloat(row["ts"]))
 			points = append(points, broker.EarnRatePoint{
 				Rate:      rate,

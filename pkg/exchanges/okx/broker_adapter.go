@@ -242,12 +242,24 @@ func (a *OKXBrokerAdapter) SetFuturesLeverage(_ context.Context, symbol string, 
 	if positionSide != "" {
 		params["posSide"] = strings.ToLower(positionSide)
 	}
+	logger.DebugCF("okx-leverage", "SetFuturesLeverage request", map[string]any{
+		"symbol": symbol, "leverage": leverage, "marginMode": marginMode, "positionSide": positionSide,
+	})
 	err = catchPanic(func() error {
 		out, err = a.client.SetLeverage(leverage, ccxt.WithSetLeverageSymbol(symbol), ccxt.WithSetLeverageParams(params))
 		return err
 	})
 	if err != nil {
+		logger.WarnCF("okx-leverage", "SetFuturesLeverage failed", map[string]any{
+			"symbol": symbol, "leverage": leverage, "marginMode": marginMode, "error": err.Error(),
+		})
 		return nil, fmt.Errorf("okx futures: set leverage: %w", err)
+	}
+	// Log the response to verify OKX applied the requested mode and leverage.
+	if len(out) > 0 {
+		logger.InfoCF("okx-leverage", "SetFuturesLeverage response", map[string]any{
+			"symbol": symbol, "response": out,
+		})
 	}
 	return out, nil
 }

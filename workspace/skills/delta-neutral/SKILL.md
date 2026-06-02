@@ -374,6 +374,47 @@ A high funding APR alone does not guarantee a good trade. Before creating a plan
 4. **Estimate total costs**: Use the per-symbol workflow (Steps 1–5 in Opportunity Scanning) to compute round-trip costs, net carry, and breakeven days.
 5. **Select and confirm**: Only then create a plan via `create_delta_neutral_plan` with your chosen spot and futures portfolios.
 
+## Projected Yield — Dry-Run Mode (§7.1.4b)
+
+When a user asks **"how much would I earn per year from X if I put Y USDT into delta-neutral?"**, call `get_delta_neutral_summary` directly — **no plan creation needed**:
+
+```
+get_delta_neutral_summary(
+  spot_provider = "binance",   // or "okx"
+  spot_symbol   = "DOT/USDT",
+  capital_usdt  = 100
+)
+```
+
+The tool fetches live funding rate and earn APY from the exchange and returns:
+- `Funding APY%` — annualised funding rate (using the actual settlement interval: 1h/4h/8h)
+- `Earn APY%` — best flexible-earn product APY for the base asset
+- `Combined APY%` — total annualised yield
+- `Annual combined` — projected USDT income per year (based on ~50% spot notional of capital)
+- `Daily combined` — projected USDT income per day
+- `Breakeven (funding only)` — days to recover entry + exit costs from funding alone
+- `Breakeven (funding + earn)` — days to break even including earn yield
+
+Optional parameters: `futures_symbol` (auto-derived as `DOT/USDT:USDT`), `futures_provider`, `spot_account`, `futures_account`, `leverage` (default 1).
+
+### Example answer for "how much from DOT at 100 USDT on Binance?"
+
+```
+Dry-run yield projection: DOT/USDT on binance · 100.00 USDT capital
+
+⚡ PROJECTED YIELD (live market rates)
+  Funding APY:        21.90%  (rate 0.000100, interval 4h)
+  Earn APY:            3.20%
+  Combined APY:       25.10%
+
+  Annual combined:   +12.55 USDT  (25.10% × 50.00 USDT spot notional)
+  Breakeven (funding + earn): 2.93 days
+```
+
+> Note: projections use live rates which change each funding period. Actual returns will vary.
+> The notional used is `capital × 0.5` (50 USDT of 100), as ~half the capital goes to spot
+> and the other half covers futures margin at 1× leverage.
+
 ## Earning the Spot Leg (§7.1.5)
 
 The spot-long leg of a delta-neutral strategy can earn additional yield from flexible-savings products offered by the exchange, **on top of the funding APR from the futures short leg**. This earn APY compounds the total return, though it is **variable, tiered, and not guaranteed**.
@@ -738,11 +779,12 @@ This skill uses the following existing tools. Note that **dedicated delta-neutra
 
 - `create_delta_neutral_plan` — Create and persist a plan; registers cron monitor job. Accepts `leverage` parameter and `risk_policy.max_leverage`; sizes both legs to equal notional; rejects if leverage exceeds max.
 - `list_delta_neutral_plans` — List all active and inactive plans with health status.
-- `get_delta_neutral_plan` — Retrieve a specific plan and its recent monitor snapshots, alerts, and execution history.
+- `get_delta_neutral_plan` — Retrieve a specific plan and its recent monitor snapshots, alerts, and execution history. For draft/ready plans with no open position, automatically fetches live funding rate and earn APY and shows projected annual yield and breakeven days.
 - `update_delta_neutral_plan` — Update plan name, monitor interval, risk thresholds, or pause/resume. Accepts `leverage` parameter: for draft/ready plans, stored for next open; for active plans, requires `confirm=true` and applies live on exchange with liquidation-distance re-validation.
 - `delete_delta_neutral_plan` — Delete a draft or closed plan.
-- `get_delta_neutral_summary` — Fetch plan-level PnL summary from the delta-neutral store.
+- `get_delta_neutral_summary` — Get plan P&L summary, or **dry-run yield projection with no plan needed** (pass `spot_provider` + `spot_symbol` + `capital_usdt` instead of `plan_id`). Active plans: live health, P&L breakdown, daily yield, and breakeven. Draft/ready plans: live-fetched projection. Dry-run: instant projection for any asset/exchange/capital without creating anything.
 - `get_delta_neutral_history` — Fetch execution history, monitor snapshots, and alerts for a plan.
+- `render_delta_neutral_yield_chart` — Render and send the Yield History chart (funding rate, funding APY%, earn APY%, combined APY%) as a PNG image to the chat. Selectable time period (7d/14d/30d/3m/6m/all) and optional column filter.
 - `open_delta_neutral_position` — Execute a two-leg opening (spot long + futures short) with full approval workflow and state machine.
 - `unwind_delta_neutral_position` — Execute a two-leg closing (sell spot + close futures short) with recovery path.
 - `resize_delta_neutral_position` — Adjust the notional size of an active plan by resizing both legs equally. Accepts `delta_pct` or `delta_notional_usdt` (exactly one required); active plans only. Dry-run with `confirm=false`; execute with `confirm=true`. Partial fill transitions plan to `recovery_required`.
@@ -945,12 +987,48 @@ Example call:
   "futures_symbol": "BTC/USDT:USDT",
   "capital_usdt": 10000,
   "leverage": 2,
+  "futures_margin_mode": "isolated",
   "risk_policy": {
     "max_leverage": 3,
     "min_liquidation_distance_pct": 25
   }
 }
 ```
+
+### Futures Margin Mode (cross vs isolated)
+
+The `futures_margin_mode` parameter controls how margin is allocated on the futures leg:
+
+| Mode | Behavior | When to use |
+|------|----------|-------------|
+| `cross` (default) | Shares the entire futures wallet as margin. A liquidation event on this position draws from all funds in the futures account, putting other open positions at risk. | Safe only at 1–2× leverage when no other positions are open. |
+| `isolated` | Caps exposure to the margin posted on this position only. Liquidation does **not** affect other futures positions or wallet balance. | **Strongly recommended at leverage > 2×**, or whenever other positions are open. |
+
+**Rule of thumb**: if the user says "use 5× leverage" or asks to protect other positions, always use `isolated`.
+
+Set at plan creation:
+```json
+{
+  "plan_name": "ALGO Funding Harvest",
+  "futures_margin_mode": "isolated",
+  "leverage": 5,
+  ...
+}
+```
+
+Change before opening (draft/ready plans only):
+```json
+{
+  "plan_id": 42,
+  "futures_margin_mode": "isolated"
+}
+```
+
+**Cannot be changed on an active position** — you must unwind and reopen to change margin mode on the exchange.
+
+`prepare_delta_neutral_plan` will emit a warning if `cross` margin is detected at leverage > 2×.
+
+---
 
 ### Editing Leverage on Existing Plans
 

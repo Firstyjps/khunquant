@@ -137,6 +137,9 @@ type MonitorSnapshot struct {
 	FuturesNotionalUSDT      float64   `json:"futures_notional_usdt"`
 	FuturesUnrealizedPnLUSDT float64   `json:"futures_unrealized_pnl_usdt"`
 	CurrentFundingRate       float64   `json:"current_funding_rate"`
+	FundingAPYPct            float64   `json:"funding_apy_pct"`    // current rate annualised as a percentage
+	EarnAPYPct               float64   `json:"earn_apy_pct"`       // best flexible-earn APY for base asset, %
+	CombinedAPYPct           float64   `json:"combined_apy_pct"`   // FundingAPYPct + EarnAPYPct
 	EstimatedNextFundingUSDT float64   `json:"estimated_next_funding_usdt"`
 	FundingState             string    `json:"funding_state"`
 	DeltaDriftPct            float64   `json:"delta_drift_pct"`

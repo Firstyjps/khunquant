@@ -149,7 +149,21 @@ export function ChatPage() {
 
           {messages.map((msg) => (
             <div key={msg.id} className="flex w-full">
-              {msg.role === "assistant" ? (
+              {msg.role === "assistant" && msg.imageDataUri ? (
+                <div className="flex w-full flex-col gap-1 py-2">
+                  <img
+                    src={msg.imageDataUri}
+                    alt={msg.imageFilename || "chart"}
+                    className="max-w-full rounded-lg border border-border/40"
+                    style={{ maxHeight: 480 }}
+                  />
+                  {msg.imageCaption && (
+                    <span className="text-muted-foreground text-xs">
+                      {msg.imageCaption}
+                    </span>
+                  )}
+                </div>
+              ) : msg.role === "assistant" ? (
                 <AssistantMessage
                   content={msg.content}
                   timestamp={msg.timestamp}

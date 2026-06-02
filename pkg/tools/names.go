@@ -100,7 +100,8 @@ const (
 	NameOpenDeltaNeutralPosition      = "open_delta_neutral_position"
 	NameUnwindDeltaNeutralPosition    = "unwind_delta_neutral_position"
 	NameResizeDeltaNeutralPosition    = "resize_delta_neutral_position"
-	NameScanDeltaNeutralOpportunities = "scan_delta_neutral_opportunities"
+	NameScanDeltaNeutralOpportunities  = "scan_delta_neutral_opportunities"
+	NameRenderDeltaNeutralYieldChart   = "render_delta_neutral_yield_chart"
 
 	// Earn (Track G — Savings/Staking)
 	NameEarnOverview       = "earn_overview"
@@ -188,12 +189,13 @@ const (
 	DescGetDeltaNeutralPlan           = "Get details of a single delta-neutral plan including its latest monitor snapshot and alert."
 	DescUpdateDeltaNeutralPlan        = "Update an existing delta-neutral plan's settings: monitor interval, risk thresholds, or notification routing."
 	DescDeleteDeltaNeutralPlan        = "Delete a delta-neutral plan and cancel its cron job. Reject if the plan is active — pause first."
-	DescGetDeltaNeutralSummary        = "Get the economic summary for a delta-neutral plan: latest snapshot data (health, delta, funding, margin, PnL)."
+	DescGetDeltaNeutralSummary        = "Get the economic summary for an existing delta-neutral plan, OR project yield without any plan (dry-run). Dry-run: pass spot_provider + spot_symbol + capital_usdt (no plan_id) to get projected annual income, daily yield, and breakeven instantly. Active plans: live health, P&L breakdown, daily yield. Draft/ready plans: live-fetched projection."
 	DescGetDeltaNeutralHistory        = "Get paginated monitor snapshots and alerts for a delta-neutral plan."
 	DescPrepareDeltaNeutralPlan        = "Validate a draft delta-neutral plan and promote it to 'ready' status. Runs sanity checks (capital, leverage policy, symbol format, cross-exchange warning) without placing any orders. Safe to call multiple times; idempotent on already-ready plans."
 	DescOpenDeltaNeutralPosition      = "Open a delta-neutral position (approval-mode two-leg execution: futures hedge + spot buy). HIGHEST-RISK: requires leverage opt-in, permission, daily-loss, rate-limit gates. Dry-run (confirm=false) shows review; confirm=true executes."
 	DescUnwindDeltaNeutralPosition    = "Close a delta-neutral position (unwind both legs: reduce-only futures close + spot sell). Recovery tool for unhedged exposure or manual closure. Approval-mode: confirm=true required."
 	DescResizeDeltaNeutralPosition    = "Adjust an active delta-neutral position by resizing both legs equally (approval-mode). Maintains delta-neutrality (equal notional on both legs). Partial fill → recovery_required. Dry-run (confirm=false) shows review; confirm=true executes."
+	DescRenderDeltaNeutralYieldChart   = "Render and send the Yield History chart (funding rate, funding APY%, earn APY%, combined APY%) for a delta-neutral plan as a PNG image to the active chat. Selectable time period (7d/14d/30d/3m/6m/all) and optional column filter."
 	DescScanDeltaNeutralOpportunities = "Scan the top N crypto assets by market cap for delta-neutral funding-carry opportunities: batch-fetch funding rates, optionally compute stability stats, and return a ranked table. Provider may be 'binance', 'okx', or empty/'all' to scan every supported exchange and combine the results (each row tagged with its exchange). Sortable via sort_by (funding_rate [default], apr, 7d_avg, 14d_avg) and sort_order (desc [default], asc) on SIGNED values — default funding_rate desc puts most-positive funding first, most-negative last; sorting by 7d_avg/14d_avg computes stability for all candidates. Each row has a Spot column flagging whether the asset also has a spot pair on its exchange (perp-but-no-spot rows are kept and marked NO-SPOT, not filtered out). Funding-only screen — validate with risk tools before trading."
 
 	// Earn tool descriptions

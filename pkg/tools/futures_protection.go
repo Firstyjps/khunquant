@@ -74,8 +74,9 @@ func (t *FuturesModifyProtectionTool) Execute(ctx context.Context, args map[stri
 		return ErrorResult(err.Error()).WithError(err)
 	}
 
-	// Determine position side and quantity from live position if not specified
+	// Determine position side, quantity, and margin mode from live position if not specified
 	positionSide := positionSideArg
+	var posMarginMode string
 	if protectionQty == 0 || positionSide == "" {
 		positions, posErr := fp.FetchFuturesPositions(ctx, []string{symbol})
 		if posErr == nil {
@@ -91,6 +92,9 @@ func (t *FuturesModifyProtectionTool) Execute(ctx context.Context, args map[stri
 				}
 				if positionSide == "" && p.Side != nil {
 					positionSide = *p.Side
+				}
+				if p.MarginMode != nil {
+					posMarginMode = *p.MarginMode
 				}
 				break
 			}
@@ -157,7 +161,7 @@ func (t *FuturesModifyProtectionTool) Execute(ctx context.Context, args map[stri
 		slParams := map[string]interface{}{"stopLossPrice": stopLoss}
 		order, slErr := fp.CreateFuturesOrder(ctx, broker.FuturesOrderRequest{
 			Symbol: symbol, OrderType: "market", Side: closeSide, Amount: protectionQty,
-			PositionSide: positionSide, ReduceOnly: true, Params: slParams,
+			PositionSide: positionSide, ReduceOnly: true, MarginMode: posMarginMode, Params: slParams,
 		})
 		sb.WriteString(fmt.Sprintf("  stop_loss:   %s\n", formatOrderLine("stop_loss", order, slErr)))
 		if slErr != nil {
@@ -168,7 +172,7 @@ func (t *FuturesModifyProtectionTool) Execute(ctx context.Context, args map[stri
 		tpParams := map[string]interface{}{"takeProfitPrice": takeProfit}
 		order, tpErr := fp.CreateFuturesOrder(ctx, broker.FuturesOrderRequest{
 			Symbol: symbol, OrderType: "market", Side: closeSide, Amount: protectionQty,
-			PositionSide: positionSide, ReduceOnly: true, Params: tpParams,
+			PositionSide: positionSide, ReduceOnly: true, MarginMode: posMarginMode, Params: tpParams,
 		})
 		sb.WriteString(fmt.Sprintf("  take_profit: %s\n", formatOrderLine("take_profit", order, tpErr)))
 		if tpErr != nil {

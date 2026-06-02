@@ -28,6 +28,7 @@ func (t *UpdateDeltaNeutralPlanTool) Name() string { return NameUpdateDeltaNeutr
 func (t *UpdateDeltaNeutralPlanTool) Description() string {
 	return "Update an existing delta-neutral plan. Editable fields: name, enabled state, monitor_interval (recreates cron job when changed), " +
 		"futures leverage (set leverage for draft/ready plans to apply at next open; for active plans, applies live on exchange with liquidation-distance re-validation), " +
+		"futures_margin_mode ('cross' or 'isolated'; draft/ready plans only — active positions must be unwound first), " +
 		"risk thresholds (funding rate, liquidation distance, delta drift, slippage, capital limits, leverage cap, reserve margin), " +
 		"and notification routing. Leverage does not change delta (matched notional), only margin and liquidation distance. " +
 		"Provider/account bindings cannot be changed after draft status — pause/close the plan first to re-configure the legs."
@@ -52,6 +53,11 @@ func (t *UpdateDeltaNeutralPlanTool) Parameters() map[string]any {
 			"leverage": map[string]any{
 				"type":        "integer",
 				"description": "Set the futures leverage. For draft/ready plans, stored and applied at next open. For active plans, applied live on the exchange and re-validated against the liquidation-distance policy (requires confirm=true).",
+			},
+			"futures_margin_mode": map[string]any{
+				"type":        "string",
+				"enum":        []string{"cross", "isolated"},
+				"description": "Change the margin mode for the futures leg. Only allowed on draft/ready plans — an active position must be closed/unwound first to change margin mode on the exchange.",
 			},
 			"confirm": map[string]any{
 				"type":        "boolean",
@@ -251,6 +257,20 @@ func (t *UpdateDeltaNeutralPlanTool) Execute(ctx context.Context, args map[strin
 
 		default:
 			return ErrorResult(fmt.Sprintf("cannot change leverage on a %s plan", plan.Status))
+		}
+	}
+
+	// Update margin mode (draft/ready only — active positions can't change margin mode without closing)
+	if mmStr, ok := args["futures_margin_mode"].(string); ok && mmStr != "" {
+		if mmStr != "cross" && mmStr != "isolated" {
+			return ErrorResult("futures_margin_mode must be 'cross' or 'isolated'")
+		}
+		switch plan.Status {
+		case deltaneutral.PlanStatusDraft, deltaneutral.PlanStatusReady:
+			plan.FuturesMarginMode = mmStr
+			changed = true
+		default:
+			return ErrorResult(fmt.Sprintf("cannot change margin mode on a %s plan — unwind the position first", plan.Status))
 		}
 	}
 

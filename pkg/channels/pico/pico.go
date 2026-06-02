@@ -2,10 +2,12 @@ package pico
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -299,6 +301,58 @@ func (c *PicoChannel) SendPlaceholder(ctx context.Context, chatID string) (strin
 	}
 
 	return msgID, nil
+}
+
+// SendMedia implements channels.MediaSender.
+// Images and files are base64-encoded and delivered as a `media.create` WebSocket message
+// so the web client can display them inline without a separate download step.
+func (c *PicoChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMessage) error {
+	if !c.IsRunning() {
+		return channels.ErrNotRunning
+	}
+
+	store := c.GetMediaStore()
+	if store == nil {
+		return fmt.Errorf("no media store available: %w", channels.ErrSendFailed)
+	}
+
+	for _, part := range msg.Parts {
+		localPath, err := store.Resolve(part.Ref)
+		if err != nil {
+			logger.WarnCF("pico", "Failed to resolve media ref", map[string]any{
+				"ref": part.Ref, "error": err.Error(),
+			})
+			continue
+		}
+
+		data, err := os.ReadFile(localPath)
+		if err != nil {
+			logger.WarnCF("pico", "Failed to read media file", map[string]any{
+				"path": localPath, "error": err.Error(),
+			})
+			continue
+		}
+
+		contentType := part.ContentType
+		if contentType == "" {
+			contentType = "application/octet-stream"
+		}
+		dataURI := "data:" + contentType + ";base64," + base64.StdEncoding.EncodeToString(data)
+
+		outMsg := newMessage(TypeMediaCreate, map[string]any{
+			"media_type":   part.Type,
+			"filename":     part.Filename,
+			"content_type": contentType,
+			"data":         dataURI,
+			"caption":      part.Caption,
+		})
+		if err := c.broadcastToSession(msg.ChatID, outMsg); err != nil {
+			logger.WarnCF("pico", "Failed to broadcast media message", map[string]any{
+				"chat_id": msg.ChatID, "error": err.Error(),
+			})
+		}
+	}
+	return nil
 }
 
 // broadcastToSession sends a message to all connections with a matching session.

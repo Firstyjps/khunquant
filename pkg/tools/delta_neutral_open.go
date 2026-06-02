@@ -307,7 +307,17 @@ func (t *OpenDeltaNeutralPositionTool) executeFuturesLeg(ctx context.Context, pl
 	if mkt.Limits.Amount.Min != nil && *mkt.Limits.Amount.Min > 0 {
 		minAmount = *mkt.Limits.Amount.Min
 	}
-	numContracts, err := contractsFromNotional(plan.FuturesNotionalUSDT, markPrice, perContractSize, minAmount)
+	// Size futures to cover the NET spot quantity after spot taker-fee deduction.
+	// Spot fee is taken from received tokens (not USDT), so:
+	//   net_spot_qty = (SpotNotionalUSDT / spot_price) × (1 - fee)
+	//   ≈ SpotNotionalUSDT × (1 - fee) / futures_price  (prices are nearly equal)
+	// Using SpotNotionalUSDT × (1-fee) instead of FuturesNotionalUSDT removes the
+	// ~7 ALGO unhedged gap seen previously; residual mismatch is only contract rounding.
+	// TODO: fetch actual spot taker fee from the user's account tier via the exchange API
+	// instead of hardcoding 0.1%. Users on higher tiers or using fee tokens (BNB/OKX) pay less.
+	const spotTakerFee = 0.001 // 0.1% — OKX / Binance default spot taker rate
+	hedgeNotional := plan.SpotNotionalUSDT * (1 - spotTakerFee)
+	numContracts, err := contractsFromNotional(hedgeNotional, markPrice, perContractSize, minAmount)
 	if err != nil {
 		return false, fmt.Errorf("contract count computation: %w", err)
 	}
@@ -338,7 +348,8 @@ func (t *OpenDeltaNeutralPositionTool) executeFuturesLeg(ctx context.Context, pl
 		return false, fmt.Errorf("set leverage: %w", err)
 	}
 
-	// Create the futures order
+	// Create the futures order — pass MarginMode so OKX sets tdMode=isolated/cross on the order.
+	// set_leverage alone is not enough; OKX also requires tdMode on each order.
 	order, err := fp.CreateFuturesOrder(ctx, broker.FuturesOrderRequest{
 		Symbol:       plan.FuturesSymbol,
 		OrderType:    "market",
@@ -346,6 +357,7 @@ func (t *OpenDeltaNeutralPositionTool) executeFuturesLeg(ctx context.Context, pl
 		Amount:       numContracts,
 		PositionSide: positionSide,
 		ReduceOnly:   false,
+		MarginMode:   plan.FuturesMarginMode,
 	})
 	if err != nil {
 		leg.State = string(deltaneutral.LegStateFailed)
@@ -354,11 +366,39 @@ func (t *OpenDeltaNeutralPositionTool) executeFuturesLeg(ctx context.Context, pl
 		return false, err
 	}
 
+	// OKX returns order ID immediately but fill data (Filled, Average, Cost) requires
+	// a subsequent FetchFuturesOrder call. Fetch once to get actual fill details.
+	if oid := orderID(order); oid != "" {
+		if fetched, fetchErr := fp.FetchFuturesOrder(ctx, oid, plan.FuturesSymbol); fetchErr == nil {
+			order = fetched
+		}
+	}
+
+	// Use actual fill data; fall back to pre-fill estimates when unavailable.
+	filledBase := baseQty
+	avgFill := markPrice
+	filledNotional := plan.FuturesNotionalUSDT
+	if order.Filled != nil && *order.Filled > 0 {
+		filledBase = *order.Filled * perContractSize // contracts → base currency
+	}
+	if order.Average != nil && *order.Average > 0 {
+		avgFill = *order.Average
+	}
+	if order.Cost != nil && *order.Cost > 0 {
+		filledNotional = *order.Cost
+	}
+
 	leg.OrderID = orderID(order)
 	leg.State = string(deltaneutral.LegStateFilled)
-	leg.FilledQuantity = baseQty
-	leg.FilledNotionalUSDT = plan.FuturesNotionalUSDT
-	leg.AvgFillPrice = markPrice
+	leg.FilledQuantity = filledBase
+	leg.FilledNotionalUSDT = filledNotional
+	leg.AvgFillPrice = avgFill
+	if order.Fee.Cost != nil && *order.Fee.Cost > 0 {
+		leg.FeeUSDT = -(*order.Fee.Cost) // futures fees are settled in USDT; negate so fees are negative (cost)
+	}
+
+	// Update plan with actual fill cost so the P&L card uses real entry notional.
+	plan.FuturesNotionalUSDT = filledNotional
 
 	_, err = t.store.SaveExecutionLeg(ctx, leg)
 	return err == nil, err
@@ -427,11 +467,42 @@ func (t *OpenDeltaNeutralPositionTool) executeSpotLeg(ctx context.Context, plan 
 		return false, err
 	}
 
+	// OKX returns order ID immediately but fill details (Filled, Average, Cost) are
+	// only populated in a subsequent FetchOrder call. Fetch once to get actual data.
+	if oid := orderID(order); oid != "" {
+		if fetched, fetchErr := tp.FetchOrder(ctx, oid, plan.SpotSymbol); fetchErr == nil {
+			order = fetched
+		}
+	}
+
+	// Use actual fill data; fall back to pre-fill estimates when unavailable.
+	// For OKX spot buys, order.Filled is gross ALGO before fee deduction.
+	// order.Cost is USDT paid. Fee is deducted from received ALGO, not USDT.
+	filledQty := quantity
+	avgFill := price
+	filledNotional := plan.SpotNotionalUSDT
+	if order.Filled != nil && *order.Filled > 0 {
+		filledQty = *order.Filled
+	}
+	if order.Average != nil && *order.Average > 0 {
+		avgFill = *order.Average
+	}
+	if order.Cost != nil && *order.Cost > 0 {
+		filledNotional = *order.Cost
+	}
+
 	leg.OrderID = orderID(order)
 	leg.State = string(deltaneutral.LegStateFilled)
-	leg.FilledQuantity = quantity
-	leg.FilledNotionalUSDT = plan.SpotNotionalUSDT
-	leg.AvgFillPrice = price
+	leg.FilledQuantity = filledQty
+	leg.FilledNotionalUSDT = filledNotional
+	leg.AvgFillPrice = avgFill
+	// Spot fee is paid in base currency (e.g. ALGO); convert to USDT equivalent.
+	if order.Fee.Cost != nil && *order.Fee.Cost > 0 && avgFill > 0 {
+		leg.FeeUSDT = -(*order.Fee.Cost * avgFill) // negate so fees are negative (cost)
+	}
+
+	// Update plan with actual fill cost so the P&L card uses real entry notional.
+	plan.SpotNotionalUSDT = filledNotional
 
 	_, err = t.store.SaveExecutionLeg(ctx, leg)
 	return err == nil, err
