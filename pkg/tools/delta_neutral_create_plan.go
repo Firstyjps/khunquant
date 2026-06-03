@@ -85,7 +85,7 @@ func (t *CreateDeltaNeutralPlanTool) Parameters() map[string]any {
 			"monitor_interval": map[string]any{
 				"type":        "string",
 				"enum":        []string{"30s", "1m", "3m", "5m", "10m", "15m", "30m", "1h", "2h", "3h", "4h", "8h", "1d"},
-				"description": "How often to evaluate plan health. Default '5m'. Sub-minute intervals (30s, 1m) may trigger rate-limit warnings.",
+				"description": "How often to evaluate plan health. Default '15m'. Sub-minute intervals (30s, 1m) may trigger rate-limit warnings.",
 			},
 			"risk_policy": map[string]any{
 				"type":        "object",

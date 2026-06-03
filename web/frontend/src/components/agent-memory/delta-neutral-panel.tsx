@@ -27,6 +27,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { DeltaNeutralPnLCard, DeltaNeutralYieldCard } from "./delta-neutral-position-cards"
 import { DeltaNeutralYieldChart } from "./delta-neutral-yield-chart"
+import { InfoHint, LabelWithHint } from "./info-hint"
 
 function formatDate(iso: string): string {
   try {
@@ -73,10 +74,15 @@ function healthScoreTextColor(label: string): string {
   return "text-gray-500"
 }
 
-function SectionHeader({ title, count }: { title: string; count?: number }) {
+function SectionHeader({ title, count, hint }: { title: string; count?: number; hint?: string }) {
   return (
     <div className="border-border/50 flex items-center border-b px-3 py-2">
-      <span className="text-foreground/80 text-sm font-medium">{title}</span>
+      <span className="text-foreground/80 text-xs font-medium uppercase tracking-wide">{title}</span>
+      {hint && (
+        <span className="ml-1.5">
+          <InfoHint text={hint} />
+        </span>
+      )}
       {count !== undefined && (
         <span className="ml-2 rounded-full bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
           {count}
@@ -86,14 +92,32 @@ function SectionHeader({ title, count }: { title: string; count?: number }) {
   )
 }
 
-function PlanSummary({ plan }: { plan: DeltaNeutralPlanListItem }) {
-  const statCell = (label: string, value: string) => (
-    <div className="rounded-lg border p-3">
-      <div className="text-muted-foreground mb-1 text-xs">{label}</div>
-      <div className="font-mono text-sm font-medium">{value}</div>
+// ─── stat cell used in plan summary ─────────────────────────────────────────
+
+function StatCell({
+  label,
+  hint,
+  value,
+}: {
+  label: string
+  hint: string
+  value: string
+}) {
+  return (
+    <div className="rounded-lg border p-3 min-w-0">
+      <div className="text-muted-foreground mb-1 flex items-center gap-1 text-xs">
+        <LabelWithHint label={label} hint={hint} className="text-muted-foreground text-xs" />
+      </div>
+      <div className="font-mono text-sm font-medium truncate" title={value}>
+        {value}
+      </div>
     </div>
   )
+}
 
+// ─── plan summary ────────────────────────────────────────────────────────────
+
+function PlanSummary({ plan }: { plan: DeltaNeutralPlanListItem }) {
   return (
     <div className="flex flex-col gap-3">
       {/* Plan header with inline health score */}
@@ -114,7 +138,7 @@ function PlanSummary({ plan }: { plan: DeltaNeutralPlanListItem }) {
             Cross-Exchange
           </span>
         )}
-        {/* Inline health indicator */}
+        {/* Health indicator */}
         <span className={`font-mono text-sm font-semibold ${healthScoreTextColor(plan.health_label)}`}>
           {plan.health_score}
           <span className="text-muted-foreground font-normal">/100</span>
@@ -122,18 +146,12 @@ function PlanSummary({ plan }: { plan: DeltaNeutralPlanListItem }) {
         <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${healthLabelColor(plan.health_label)}`}>
           {plan.health_label}
         </span>
+        <InfoHint text="Health score (0–100) evaluates delta drift, margin safety, liquidation distance, and funding rate status each monitor tick. Labels: excellent ≥85, healthy ≥65, watch ≥45, warning ≥25, danger <25." />
       </div>
 
+      {/* Provider routing */}
       <div className="text-muted-foreground text-xs">
         {plan.spot_provider} ({plan.spot_account}) ↔ {plan.futures_provider} ({plan.futures_account})
-      </div>
-
-      {/* Stats grid */}
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        {statCell("Capital", `${formatNum(plan.capital_usdt, 2)} USDT`)}
-        {statCell("Spot Symbol", plan.spot_symbol)}
-        {statCell("Futures Symbol", plan.futures_symbol)}
-        {statCell("Monitor Interval", plan.monitor_interval)}
       </div>
 
       {/* Health progress bar */}
@@ -144,18 +162,55 @@ function PlanSummary({ plan }: { plan: DeltaNeutralPlanListItem }) {
         />
       </div>
 
+      {/* Stats grid — wraps on narrow widths */}
+      <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+        <StatCell
+          label="Capital"
+          hint="Target USDT capital allocated to this strategy. Split roughly 50/50 between spot buy and futures margin."
+          value={`${formatNum(plan.capital_usdt, 2)} USDT`}
+        />
+        <StatCell
+          label="Spot Symbol"
+          hint="The spot trading pair used for the long leg (e.g. ALGO/USDT). Bought at open; sold on unwind."
+          value={plan.spot_symbol}
+        />
+        <StatCell
+          label="Futures Symbol"
+          hint="The perpetual futures contract used for the short hedge (e.g. ALGO/USDT:USDT). Provides funding income when longs pay shorts."
+          value={plan.futures_symbol}
+        />
+        <StatCell
+          label="Monitor Interval"
+          hint="How often the agent checks positions, funding, and risk metrics. Shorter intervals react faster but consume more compute."
+          value={plan.monitor_interval}
+        />
+      </div>
+
       {/* Accumulated fees */}
       {plan.fee_snapshot && (
-        <div className="rounded-lg border p-3">
-          <div className="text-muted-foreground mb-2 flex items-center justify-between text-xs">
-            <span>Accumulated Fees</span>
-            <span>{formatDate(plan.fee_snapshot.fetched_at)}</span>
+        <div className="overflow-hidden rounded-lg border">
+          <div className="border-border/50 flex items-center justify-between border-b px-3 py-2">
+            <div className="flex items-center gap-1.5">
+              <span className="text-foreground/80 text-xs font-medium uppercase tracking-wide">
+                Accumulated Fees
+              </span>
+              <InfoHint text="Running totals of all fees since the strategy was opened. Trading fees are always negative (cost). Funding fees are positive when shorts receive payment from longs (typical in a bullish market)." />
+            </div>
+            <span className="text-muted-foreground text-xs">
+              {formatDate(plan.fee_snapshot.fetched_at)}
+            </span>
           </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <div className="text-muted-foreground mb-0.5 text-xs">Trading Fee</div>
+          <div className="grid grid-cols-2 gap-0 divide-x divide-border/40">
+            <div className="p-3">
+              <div className="text-muted-foreground mb-1 flex items-center gap-1 text-xs">
+                <LabelWithHint
+                  label="Trading Fee"
+                  hint="Sum of taker fees paid across all filled legs (open, resize, and close executions). Always negative — a cost. Stored in fee_usdt per leg."
+                  className="text-muted-foreground text-xs"
+                />
+              </div>
               <div
-                className={`font-mono text-sm font-medium ${
+                className={`font-mono text-sm font-semibold ${
                   plan.fee_snapshot.trading_fee_usdt < 0
                     ? "text-red-500 dark:text-red-400"
                     : "text-green-600 dark:text-green-400"
@@ -165,10 +220,16 @@ function PlanSummary({ plan }: { plan: DeltaNeutralPlanListItem }) {
                 {formatNum(plan.fee_snapshot.trading_fee_usdt, 4)} USDT
               </div>
             </div>
-            <div>
-              <div className="text-muted-foreground mb-0.5 text-xs">Funding Fee</div>
+            <div className="p-3">
+              <div className="text-muted-foreground mb-1 flex items-center gap-1 text-xs">
+                <LabelWithHint
+                  label="Funding Fee"
+                  hint="Accumulated funding payments. Positive means the strategy is net receiving (shorts paid by longs). Negative means the strategy is paying (rare in a bullish market)."
+                  className="text-muted-foreground text-xs"
+                />
+              </div>
               <div
-                className={`font-mono text-sm font-medium ${
+                className={`font-mono text-sm font-semibold ${
                   plan.fee_snapshot.funding_fee_usdt < 0
                     ? "text-red-500 dark:text-red-400"
                     : "text-green-600 dark:text-green-400"
@@ -185,6 +246,8 @@ function PlanSummary({ plan }: { plan: DeltaNeutralPlanListItem }) {
   )
 }
 
+// ─── Snapshot table ──────────────────────────────────────────────────────────
+
 function SnapshotTable({
   planId,
   snapshots,
@@ -192,7 +255,6 @@ function SnapshotTable({
   planId: number
   snapshots?: DeltaNeutralMonitorSnapshot[]
 }) {
-  // snapshots are hoisted from the parent panel query; isLoading = no data yet
   const isLoading = snapshots === undefined
   void planId // kept for future use (e.g. load-more)
 
@@ -207,7 +269,7 @@ function SnapshotTable({
   if (!snapshots || snapshots.length === 0) {
     return (
       <div className="overflow-hidden rounded-lg border">
-        <SectionHeader title="Monitor Snapshots" count={0} />
+        <SectionHeader title="Monitor Snapshots" count={0} hint="Periodic health checks captured by the agent. Each row shows the position state at one point in time." />
         <div className="text-muted-foreground py-4 text-center text-sm">No snapshots yet.</div>
       </div>
     )
@@ -215,24 +277,58 @@ function SnapshotTable({
 
   return (
     <div className="overflow-hidden rounded-lg border">
-      <SectionHeader title="Monitor Snapshots" count={snapshots.length} />
+      <SectionHeader
+        title="Monitor Snapshots"
+        count={snapshots.length}
+        hint="Periodic health checks captured by the agent. Each row shows the position state at one point in time."
+      />
       <div className="max-h-96 overflow-y-auto overflow-x-auto">
         <table className="w-full text-sm">
-          <thead className="sticky top-0 z-10 bg-background">
-            <tr className="bg-muted/40 text-muted-foreground border-b text-xs uppercase tracking-wide">
-              <th className="px-3 py-2 text-left">Checked At</th>
-              <th className="px-3 py-2 text-right">Delta Drift</th>
-              <th className="px-3 py-2 text-right">Funding</th>
-              <th className="px-3 py-2 text-right">Liq Dist</th>
-              <th className="px-3 py-2 text-right">Margin</th>
-              <th className="px-3 py-2 text-center">Health</th>
-              <th className="px-3 py-2 text-center">Status</th>
+          <thead className="sticky top-0 z-10">
+            <tr className="bg-muted/60 text-muted-foreground border-b text-xs">
+              <th className="px-3 py-2 text-left font-medium">Checked At</th>
+              <th className="px-3 py-2 text-right font-medium">
+                <span className="inline-flex items-center justify-end gap-1">
+                  Delta Drift
+                  <InfoHint text="% imbalance between spot quantity and futures notional. Near zero is ideal. A large positive drift means spot has grown relative to futures (price rose); negative means the opposite." />
+                </span>
+              </th>
+              <th className="px-3 py-2 text-right font-medium">
+                <span className="inline-flex items-center justify-end gap-1">
+                  Funding Rate
+                  <InfoHint text="Current perpetual funding rate at the time of this snapshot. Positive = longs pay shorts (we receive). Negative = shorts pay longs (we pay)." />
+                </span>
+              </th>
+              <th className="px-3 py-2 text-right font-medium">
+                <span className="inline-flex items-center justify-end gap-1">
+                  Liq Dist
+                  <InfoHint text="Liquidation distance: how far the mark price must move (as a % of current price) before the futures position is liquidated. Higher is safer." />
+                </span>
+              </th>
+              <th className="px-3 py-2 text-right font-medium">
+                <span className="inline-flex items-center justify-end gap-1">
+                  Margin
+                  <InfoHint text="Margin ratio: used margin ÷ total equity. Lower is safer. The exchange may issue a margin call when this rises above a threshold." />
+                </span>
+              </th>
+              <th className="px-3 py-2 text-center font-medium">
+                <span className="inline-flex items-center justify-center gap-1">
+                  Health
+                  <InfoHint text="Composite health score (0–100) at this snapshot. Factors: delta drift, liquidation distance, margin ratio, funding state." />
+                </span>
+              </th>
+              <th className="px-3 py-2 text-center font-medium">
+                <span className="inline-flex items-center justify-center gap-1">
+                  Status
+                  <InfoHint text="'ok' = data fetched successfully. Other values indicate a partial fetch or exchange error. 'agent invoked' means the agent was triggered to rebalance." />
+                </span>
+              </th>
             </tr>
           </thead>
-          <tbody>
+          <tbody className="divide-y divide-border/20">
             {snapshots.map((snap: DeltaNeutralMonitorSnapshot) => (
-              <tr key={snap.id} className="border-border/30 border-b last:border-0">
-                <td className="text-muted-foreground px-3 py-2 font-mono text-xs">
+              <tr key={snap.id} className="hover:bg-muted/20 transition-colors">
+                <td className="text-muted-foreground px-3 py-2 font-mono text-xs whitespace-nowrap">
                   {formatDate(snap.checked_at)}
                 </td>
                 <td className="px-3 py-2 text-right font-mono text-xs">
@@ -277,6 +373,8 @@ function SnapshotTable({
   )
 }
 
+// ─── Alert table ─────────────────────────────────────────────────────────────
+
 function AlertTable({ planId }: { planId: number }) {
   const { data: alerts, isLoading } = useQuery({
     queryKey: ["dn-alerts", planId],
@@ -294,7 +392,7 @@ function AlertTable({ planId }: { planId: number }) {
   if (!alerts || alerts.length === 0) {
     return (
       <div className="overflow-hidden rounded-lg border">
-        <SectionHeader title="Alerts" count={0} />
+        <SectionHeader title="Alerts" count={0} hint="Risk alerts triggered when a health threshold was breached. The agent may auto-invoke to rebalance on critical alerts." />
         <div className="text-muted-foreground py-4 text-center text-sm">No alerts yet.</div>
       </div>
     )
@@ -302,20 +400,29 @@ function AlertTable({ planId }: { planId: number }) {
 
   return (
     <div className="overflow-hidden rounded-lg border">
-      <SectionHeader title="Alerts" count={alerts.length} />
+      <SectionHeader
+        title="Alerts"
+        count={alerts.length}
+        hint="Risk alerts triggered when a health threshold was breached. The agent may auto-invoke to rebalance on critical alerts."
+      />
       <div className="max-h-80 overflow-y-auto overflow-x-auto">
         <table className="w-full text-sm">
-          <thead className="sticky top-0 z-10 bg-background">
-            <tr className="bg-muted/40 text-muted-foreground border-b text-xs uppercase tracking-wide">
-              <th className="px-3 py-2 text-left">Triggered At</th>
-              <th className="px-3 py-2 text-center">Severity</th>
-              <th className="px-3 py-2 text-left">Code</th>
-              <th className="px-3 py-2 text-left">Message</th>
+          <thead className="sticky top-0 z-10">
+            <tr className="bg-muted/60 text-muted-foreground border-b text-xs">
+              <th className="px-3 py-2 text-left font-medium">Triggered At</th>
+              <th className="px-3 py-2 text-center font-medium">
+                <span className="inline-flex items-center justify-center gap-1">
+                  Severity
+                  <InfoHint text="info = informational, warning = monitor closely, critical = agent may auto-rebalance." />
+                </span>
+              </th>
+              <th className="px-3 py-2 text-left font-medium">Code</th>
+              <th className="px-3 py-2 text-left font-medium">Message</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody className="divide-y divide-border/20">
             {alerts.map((alert: DeltaNeutralAlert) => (
-              <tr key={alert.id} className="border-border/30 border-b last:border-0">
+              <tr key={alert.id} className="hover:bg-muted/20 transition-colors">
                 <td className="text-muted-foreground px-3 py-2 font-mono text-xs whitespace-nowrap">
                   {formatDate(alert.triggered_at)}
                 </td>
@@ -349,6 +456,8 @@ function AlertTable({ planId }: { planId: number }) {
   )
 }
 
+// ─── Execution table ──────────────────────────────────────────────────────────
+
 function ExecutionTable({ planId }: { planId: number }) {
   const { data: execs, isLoading } = useQuery({
     queryKey: ["dn-executions", planId],
@@ -366,7 +475,7 @@ function ExecutionTable({ planId }: { planId: number }) {
   if (!execs || execs.length === 0) {
     return (
       <div className="overflow-hidden rounded-lg border">
-        <SectionHeader title="Execution History" count={0} />
+        <SectionHeader title="Execution History" count={0} hint="Records of open, resize, and close operations. Each execution has one or more legs (spot buy/sell, futures buy/sell)." />
         <div className="text-muted-foreground py-4 text-center text-sm">No executions yet.</div>
       </div>
     )
@@ -374,21 +483,30 @@ function ExecutionTable({ planId }: { planId: number }) {
 
   return (
     <div className="overflow-hidden rounded-lg border">
-      <SectionHeader title="Execution History" count={execs.length} />
+      <SectionHeader
+        title="Execution History"
+        count={execs.length}
+        hint="Records of open, resize, and close operations. Each execution has one or more legs (spot buy/sell, futures buy/sell)."
+      />
       <div className="max-h-80 overflow-y-auto overflow-x-auto">
         <table className="w-full text-sm">
-          <thead className="sticky top-0 z-10 bg-background">
-            <tr className="bg-muted/40 text-muted-foreground border-b text-xs uppercase tracking-wide">
-              <th className="px-3 py-2 text-left">Attempt</th>
-              <th className="px-3 py-2 text-left">Requested</th>
-              <th className="px-3 py-2 text-center">State</th>
-              <th className="px-3 py-2 text-left">Legs</th>
+          <thead className="sticky top-0 z-10">
+            <tr className="bg-muted/60 text-muted-foreground border-b text-xs">
+              <th className="px-3 py-2 text-left font-medium">Attempt</th>
+              <th className="px-3 py-2 text-left font-medium">Requested</th>
+              <th className="px-3 py-2 text-center font-medium">
+                <span className="inline-flex items-center justify-center gap-1">
+                  State
+                  <InfoHint text="completed = all legs filled. approved = agent approved but not yet executed. Other states indicate partial fills or failures." />
+                </span>
+              </th>
+              <th className="px-3 py-2 text-left font-medium">Legs</th>
             </tr>
           </thead>
           <tbody>
             {execs.map((exec: DeltaNeutralExecution) => (
               <>
-                <tr key={exec.id} className="border-border/30 border-b last:border-0">
+                <tr key={exec.id} className="border-border/30 border-b hover:bg-muted/20 transition-colors">
                   <td className="text-muted-foreground px-3 py-2 font-mono text-xs whitespace-nowrap">
                     {exec.attempt_id}
                   </td>
@@ -408,14 +526,12 @@ function ExecutionTable({ planId }: { planId: number }) {
                       {exec.state}
                     </span>
                   </td>
-                  <td className="px-3 py-2 text-sm">{exec.legs.length} leg(s)</td>
+                  <td className="px-3 py-2 text-xs text-muted-foreground">{exec.legs.length} leg(s)</td>
                 </tr>
                 {exec.legs.map((leg) => (
-                  <tr key={`${exec.id}-leg-${leg.id}`} className="border-border/20 border-b last:border-0 bg-muted/20">
-                    <td colSpan={1} className="px-6 py-1.5 text-xs">
-                      {leg.leg_type}
-                    </td>
-                    <td colSpan={1} className="px-3 py-1.5 text-xs whitespace-nowrap">
+                  <tr key={`${exec.id}-leg-${leg.id}`} className="border-border/20 border-b last:border-0 bg-muted/20 hover:bg-muted/30 transition-colors">
+                    <td className="px-6 py-1.5 text-xs font-medium">{leg.leg_type}</td>
+                    <td className="px-3 py-1.5 text-xs whitespace-nowrap text-muted-foreground">
                       {leg.side} {leg.symbol} @ {leg.provider}
                     </td>
                     <td className="px-3 py-1.5 text-center">
@@ -434,6 +550,14 @@ function ExecutionTable({ planId }: { planId: number }) {
                       <span className="text-muted-foreground ml-2">
                         ≈ {formatNum(leg.filled_quantity * leg.avg_fill_price, 2)} USDT
                       </span>
+                      {leg.fee_usdt !== 0 && (
+                        <span className="text-muted-foreground ml-2">
+                          fee{" "}
+                          <span className={leg.fee_usdt < 0 ? "text-red-500 dark:text-red-400" : "text-green-500 dark:text-green-400"}>
+                            {leg.fee_usdt >= 0 ? "+" : ""}{formatNum(leg.fee_usdt, 4)} USDT
+                          </span>
+                        </span>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -452,6 +576,8 @@ function ExecutionTable({ planId }: { planId: number }) {
     </div>
   )
 }
+
+// ─── Main panel ───────────────────────────────────────────────────────────────
 
 export function DeltaNeutralPanel() {
   const [selectedId, setSelectedId] = useState<number | null>(null)
@@ -607,6 +733,7 @@ export function DeltaNeutralPanel() {
         </div>
       </div>
 
+      {/* Delete dialogs (unchanged) */}
       <AlertDialog open={deleteTarget !== null} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>

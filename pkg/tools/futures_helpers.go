@@ -4,11 +4,72 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strings"
 
 	ccxt "github.com/ccxt/ccxt/go/v4"
 
 	"github.com/cryptoquantumwave/khunquant/pkg/providers/broker"
 )
+
+// mergeOrderFillData merges fill and fee data from a CreateOrder response and a
+// subsequent FetchOrder response into a single ccxt.Order for leg recording.
+//
+// Motivation: OKX CreateOrder returns only an order ID; Filled/Average/Cost and
+// Fee arrive only in the FetchOrder response. Binance CreateOrder (FULL response)
+// carries fill data and commission in fills[]; the subsequent FetchOrder
+// (GET /api/v3/order or GET /fapi/v1/order) does NOT return commission — so
+// unconditionally overwriting with the fetched order discards the only fee source
+// on Binance. This helper merges both objects so neither source is lost.
+//
+// Rules:
+//   - Fill fields (Filled, Average, Cost, Status): prefer fetched when populated.
+//   - Fee.Cost: keep whichever is non-nil. When both are populated, prefer fetched
+//     (OKX: fetched reflects actual post-fill fee). When only create has fee
+//     (Binance FULL response), it is preserved.
+func mergeOrderFillData(create, fetched ccxt.Order) ccxt.Order {
+	out := create // start from create; preserves order ID, side, and all other fields
+	if fetched.Filled != nil && *fetched.Filled > 0 {
+		out.Filled = fetched.Filled
+	}
+	if fetched.Average != nil && *fetched.Average > 0 {
+		out.Average = fetched.Average
+	}
+	if fetched.Cost != nil && *fetched.Cost > 0 {
+		out.Cost = fetched.Cost
+	}
+	if fetched.Status != nil {
+		out.Status = fetched.Status
+	}
+	// Fee: prefer fetched when it carries data (OKX); else keep create's fee (Binance).
+	if fetched.Fee.Cost != nil {
+		out.Fee = fetched.Fee
+	}
+	return out
+}
+
+// spotFeeCostUSDT returns a positive USDT fee amount from a ccxt.Order for a spot leg.
+// The conversion is side-dependent because exchanges charge spot fees in different
+// currencies depending on order direction:
+//
+//	buy  — fee deducted from received base tokens; Fee.Cost is in base currency
+//	       → multiply by fillPrice to get USDT
+//	sell — fee deducted from received quote (USDT); Fee.Cost is already in USDT
+//	       → no conversion needed
+//
+// Returns 0 when the order carries no fee data or fillPrice is zero.
+// Callers should negate the result before storing (fees are costs; stored negative).
+func spotFeeCostUSDT(order ccxt.Order, side string, fillPrice float64) float64 {
+	if order.Fee.Cost == nil || *order.Fee.Cost <= 0 {
+		return 0
+	}
+	if strings.EqualFold(side, "buy") {
+		if fillPrice <= 0 {
+			return 0
+		}
+		return *order.Fee.Cost * fillPrice // base token fee → USDT
+	}
+	return *order.Fee.Cost // sell: fee already in USDT
+}
 
 // estimateFuturesNotional returns (notional, source, error).
 // Priority: explicit price → FetchFuturesMarkPrice → FetchFuturesFundingRate.MarkPrice.

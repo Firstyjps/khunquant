@@ -287,10 +287,11 @@ func (t *UnwindDeltaNeutralPositionTool) closeFuturesLeg(ctx context.Context, pl
 		return fmt.Errorf("close order failed: %w", err)
 	}
 
-	// Fetch order to get actual fill data and fees (same pattern as executeFuturesLeg in open.go)
+	// Fetch order to get actual fill data and fees. Use mergeOrderFillData so the
+	// create response is not discarded wholesale (Binance carries fee in the create).
 	if oid := orderID(order); oid != "" {
 		if fetched, fetchErr := fp.FetchFuturesOrder(ctx, oid, plan.FuturesSymbol); fetchErr == nil {
-			order = fetched
+			order = mergeOrderFillData(order, fetched)
 		}
 	}
 
@@ -400,10 +401,11 @@ func (t *UnwindDeltaNeutralPositionTool) closeSpotLeg(ctx context.Context, plan 
 		return fmt.Errorf("sell order failed: %w", err)
 	}
 
-	// Fetch order to get actual fill data and fees (same pattern as executeSpotLeg in open.go)
+	// Fetch order to get actual fill data and fees. Use mergeOrderFillData so the
+	// create response is not discarded wholesale (Binance carries fee in the create).
 	if oid := orderID(order); oid != "" {
 		if fetched, fetchErr := tp.FetchOrder(ctx, oid, plan.SpotSymbol); fetchErr == nil {
-			order = fetched
+			order = mergeOrderFillData(order, fetched)
 		}
 	}
 
@@ -435,9 +437,9 @@ func (t *UnwindDeltaNeutralPositionTool) closeSpotLeg(ctx context.Context, plan 
 		UpdatedAt:          time.Now(),
 	}
 
-	// Record fee from the fetched order. Spot fee is in base currency; convert to USDT equivalent.
-	if order.Fee.Cost != nil && *order.Fee.Cost > 0 && avgFillPrice > 0 {
-		leg.FeeUSDT = -(*order.Fee.Cost * avgFillPrice) // negate so fees are negative (cost)
+	// Spot fee: side-aware (buy fee is in base currency; sell fee is in USDT).
+	if fee := spotFeeCostUSDT(order, sellSide, avgFillPrice); fee > 0 {
+		leg.FeeUSDT = -fee // negative = cost
 	}
 
 	_, err = t.store.SaveExecutionLeg(ctx, leg)

@@ -368,9 +368,11 @@ func (t *OpenDeltaNeutralPositionTool) executeFuturesLeg(ctx context.Context, pl
 
 	// OKX returns order ID immediately but fill data (Filled, Average, Cost) requires
 	// a subsequent FetchFuturesOrder call. Fetch once to get actual fill details.
+	// Use mergeOrderFillData so the create response is not discarded wholesale —
+	// on Binance the create response may carry commission that FetchOrder does not.
 	if oid := orderID(order); oid != "" {
 		if fetched, fetchErr := fp.FetchFuturesOrder(ctx, oid, plan.FuturesSymbol); fetchErr == nil {
-			order = fetched
+			order = mergeOrderFillData(order, fetched)
 		}
 	}
 
@@ -469,9 +471,11 @@ func (t *OpenDeltaNeutralPositionTool) executeSpotLeg(ctx context.Context, plan 
 
 	// OKX returns order ID immediately but fill details (Filled, Average, Cost) are
 	// only populated in a subsequent FetchOrder call. Fetch once to get actual data.
+	// Use mergeOrderFillData so the create response is not discarded wholesale —
+	// on Binance the create response may carry commission that FetchOrder does not.
 	if oid := orderID(order); oid != "" {
 		if fetched, fetchErr := tp.FetchOrder(ctx, oid, plan.SpotSymbol); fetchErr == nil {
-			order = fetched
+			order = mergeOrderFillData(order, fetched)
 		}
 	}
 
@@ -496,9 +500,10 @@ func (t *OpenDeltaNeutralPositionTool) executeSpotLeg(ctx context.Context, plan 
 	leg.FilledQuantity = filledQty
 	leg.FilledNotionalUSDT = filledNotional
 	leg.AvgFillPrice = avgFill
-	// Spot fee is paid in base currency (e.g. ALGO); convert to USDT equivalent.
-	if order.Fee.Cost != nil && *order.Fee.Cost > 0 && avgFill > 0 {
-		leg.FeeUSDT = -(*order.Fee.Cost * avgFill) // negate so fees are negative (cost)
+	// Spot fee: side-aware conversion (buy fee is in base currency; sell fee is in USDT).
+	// See spotFeeCostUSDT for the full rationale.
+	if fee := spotFeeCostUSDT(order, plan.SpotSide, avgFill); fee > 0 {
+		leg.FeeUSDT = -fee // negative = cost
 	}
 
 	// Update plan with actual fill cost so the P&L card uses real entry notional.
