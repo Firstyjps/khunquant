@@ -18,6 +18,8 @@ export interface DeltaNeutralPlanListItem {
   cross_exchange: boolean
   health_score: number
   health_label: string
+  min_entry_spread_pct: number
+  target_exit_spread_pct: number
   last_checked_at?: string
   last_alert_at?: string
   fee_snapshot?: {
@@ -44,9 +46,20 @@ export interface DeltaNeutralMonitorSnapshot {
   funding_apy_pct: number
   earn_apy_pct: number
   combined_apy_pct: number
+  funding_apy_90d_pct: number
+  funding_apy_180d_pct: number
+  funding_apy_365d_pct: number
+  earn_apy_90d_pct: number
+  earn_apy_180d_pct: number
+  earn_apy_365d_pct: number
+  combined_apy_90d_pct: number
+  combined_apy_180d_pct: number
+  combined_apy_365d_pct: number
   estimated_next_funding_usdt: number
   funding_state: string
   delta_drift_pct: number
+  entry_spread_pct: number
+  exit_spread_pct: number
   liquidation_price: number
   liquidation_distance_pct: number
   margin_ratio_pct: number
@@ -152,6 +165,22 @@ export async function getDeltaNeutralPlan(
   return request<DeltaNeutralPlanListItem>(`/api/agent/delta-neutral/plans/${id}`)
 }
 
+export interface UpdateDeltaNeutralSpreadTargetsParams {
+  min_entry_spread_pct?: number
+  target_exit_spread_pct?: number
+}
+
+export async function updateDeltaNeutralSpreadTargets(
+  id: number,
+  params: UpdateDeltaNeutralSpreadTargetsParams,
+): Promise<DeltaNeutralPlanListItem> {
+  return request<DeltaNeutralPlanListItem>(`/api/agent/delta-neutral/plans/${id}/spread-targets`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  })
+}
+
 export interface DeleteDeltaNeutralPlanOptions {
   force_unwind?: boolean
   delete_without_unwind?: boolean
@@ -235,6 +264,8 @@ export interface DeltaNeutralSeriesPoint {
   funding_apy: number
   earn_apy: number
   combined_apy: number
+  entry_spread_pct: number
+  exit_spread_pct: number
 }
 
 export type DeltaNeutralSeriesRange = "7d" | "14d" | "30d" | "3m" | "6m" | "all"

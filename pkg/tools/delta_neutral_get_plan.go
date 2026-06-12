@@ -61,13 +61,13 @@ func (t *GetDeltaNeutralPlanTool) Execute(ctx context.Context, args map[string]a
 	out += fmt.Sprintf("  Enabled:            %v\n", plan.Enabled)
 	out += fmt.Sprintf("  Mode:               %s\n", plan.Mode)
 	out += "\n"
-	out += fmt.Sprintf("Spot Leg:\n")
+	out += "Spot Leg:\n"
 	out += fmt.Sprintf("  Provider:           %s\n", plan.SpotProvider)
 	out += fmt.Sprintf("  Account:            %s\n", plan.SpotAccount)
 	out += fmt.Sprintf("  Symbol:             %s\n", plan.SpotSymbol)
 	out += fmt.Sprintf("  Side:               %s\n", plan.SpotSide)
 	out += "\n"
-	out += fmt.Sprintf("Futures Leg:\n")
+	out += "Futures Leg:\n"
 	out += fmt.Sprintf("  Provider:           %s\n", plan.FuturesProvider)
 	out += fmt.Sprintf("  Account:            %s\n", plan.FuturesAccount)
 	out += fmt.Sprintf("  Symbol:             %s\n", plan.FuturesSymbol)
@@ -75,14 +75,14 @@ func (t *GetDeltaNeutralPlanTool) Execute(ctx context.Context, args map[string]a
 	out += fmt.Sprintf("  Margin Mode:        %s\n", plan.FuturesMarginMode)
 	out += fmt.Sprintf("  Leverage:           %d\n", plan.FuturesLeverage)
 	out += "\n"
-	out += fmt.Sprintf("Capital & Notional:\n")
+	out += "Capital & Notional:\n"
 	out += fmt.Sprintf("  Capital (USDT):     %.2f\n", plan.CapitalUSDT)
 	out += fmt.Sprintf("  Spot notional:      %.2f USDT\n", plan.SpotNotionalUSDT)
 	out += fmt.Sprintf("  Futures notional:   %.2f USDT\n", plan.FuturesNotionalUSDT)
 	out += fmt.Sprintf("  Reserve margin:     %.2f USDT\n", plan.ReserveMarginUSDT)
 	out += "\n"
 	costs := estimateCosts(*plan, snapshot)
-	out += fmt.Sprintf("Monitoring & Costs:\n")
+	out += "Monitoring & Costs:\n"
 	out += fmt.Sprintf("  Monitor interval:   %s\n", plan.MonitorInterval)
 	out += fmt.Sprintf("  Cron job ID:        %s\n", plan.CronJobID)
 	out += fmt.Sprintf("  Estimated entry:    %.4f USDT\n", costs.EntryCostUSDT)
@@ -98,7 +98,7 @@ func (t *GetDeltaNeutralPlanTool) Execute(ctx context.Context, args map[string]a
 		out += "  Breakeven days:     n/a\n"
 	}
 	out += "\n"
-	out += fmt.Sprintf("Configuration:\n")
+	out += "Configuration:\n"
 	out += fmt.Sprintf("  Cross-exchange:     %v\n", plan.CrossExchange)
 	out += fmt.Sprintf("  Notify channel:     %s\n", plan.NotifyChannel)
 	out += fmt.Sprintf("  Notify chat ID:     %s\n", plan.NotifyChatID)

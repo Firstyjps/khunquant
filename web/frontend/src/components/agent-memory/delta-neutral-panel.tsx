@@ -25,7 +25,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
-import { DeltaNeutralPnLCard, DeltaNeutralYieldCard } from "./delta-neutral-position-cards"
+import { DeltaNeutralPnLCard, DeltaNeutralYieldCard, DeltaNeutralSpreadCard } from "./delta-neutral-position-cards"
 import { DeltaNeutralYieldChart } from "./delta-neutral-yield-chart"
 import { InfoHint, LabelWithHint } from "./info-hint"
 
@@ -186,6 +186,20 @@ function PlanSummary({ plan }: { plan: DeltaNeutralPlanListItem }) {
         />
       </div>
 
+      {/* Spread targets */}
+      <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+        <StatCell
+          label="Entry Spread Gate"
+          hint="Minimum spread to trigger rebalancing from entry. Edit in the Spread card below."
+          value={plan.min_entry_spread_pct !== 0 ? `${plan.min_entry_spread_pct.toFixed(4)}%` : "disabled"}
+        />
+        <StatCell
+          label="Exit Spread Target"
+          hint="Target spread to trigger exit rebalancing. Edit in the Spread card below."
+          value={plan.target_exit_spread_pct !== 0 ? `${plan.target_exit_spread_pct.toFixed(4)}%` : "disabled"}
+        />
+      </div>
+
       {/* Accumulated fees */}
       {plan.fee_snapshot && (
         <div className="overflow-hidden rounded-lg border">
@@ -295,6 +309,12 @@ function SnapshotTable({
               </th>
               <th className="px-3 py-2 text-right font-medium">
                 <span className="inline-flex items-center justify-end gap-1">
+                  Spread%
+                  <InfoHint text="Current entry spread: difference between spot price and futures mark price as a percentage. Used to trigger rebalancing." />
+                </span>
+              </th>
+              <th className="px-3 py-2 text-right font-medium">
+                <span className="inline-flex items-center justify-end gap-1">
                   Funding Rate
                   <InfoHint text="Current perpetual funding rate at the time of this snapshot. Positive = longs pay shorts (we receive). Negative = shorts pay longs (we pay)." />
                 </span>
@@ -333,6 +353,9 @@ function SnapshotTable({
                 </td>
                 <td className="px-3 py-2 text-right font-mono text-xs">
                   {formatNum(snap.delta_drift_pct, 2)}%
+                </td>
+                <td className="px-3 py-2 text-right font-mono text-xs">
+                  {snap.entry_spread_pct ? `${formatNum(snap.entry_spread_pct, 4)}%` : "—"}
                 </td>
                 <td className="px-3 py-2 text-right font-mono text-xs">
                   {formatNum(snap.current_funding_rate, 4)}
@@ -722,6 +745,7 @@ export function DeltaNeutralPanel() {
                 <>
                   <DeltaNeutralPnLCard plan={selectedPlan} snap={latestSnap} />
                   <DeltaNeutralYieldCard plan={selectedPlan} snap={latestSnap} />
+                  <DeltaNeutralSpreadCard plan={selectedPlan} snapshot={latestSnap} />
                 </>
               )}
               <DeltaNeutralYieldChart planId={selectedPlan.id} />

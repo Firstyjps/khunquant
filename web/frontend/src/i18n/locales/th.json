@@ -470,6 +470,14 @@
           "dca_snapshot": "DCA Snapshot",
           "delta_neutral": "Delta-Neutral"
         },
+        "delta_neutral": {
+          "spread_card_title": "ส่วนต่าง",
+          "entry_spread": "ส่วนต่างเข้า",
+          "exit_spread": "ส่วนต่างออก",
+          "entry_spread_target": "เป้าหมายส่วนต่างเข้า",
+          "exit_spread_target": "เป้าหมายส่วนต่างออก",
+          "spread_disabled": "ปิดใช้งาน"
+        },
         "snapshot": {
           "empty": "ไม่พบ snapshot",
           "select_hint": "เลือก snapshot เพื่อดูรายละเอียด",

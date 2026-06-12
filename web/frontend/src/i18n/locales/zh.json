@@ -607,6 +607,14 @@
           "dca_snapshot": "DCA 快照",
           "delta_neutral": "Delta-Neutral"
         },
+        "delta_neutral": {
+          "spread_card_title": "价差",
+          "entry_spread": "入场价差",
+          "exit_spread": "出场价差",
+          "entry_spread_target": "入场价差门槛",
+          "exit_spread_target": "目标出场价差",
+          "spread_disabled": "禁用"
+        },
         "snapshot": {
           "empty": "未找到快照。",
           "select_hint": "选择快照以查看详情。",

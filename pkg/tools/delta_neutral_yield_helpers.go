@@ -8,7 +8,14 @@ import (
 
 	"github.com/cryptoquantumwave/khunquant/pkg/config"
 	"github.com/cryptoquantumwave/khunquant/pkg/deltaneutral"
+	"github.com/cryptoquantumwave/khunquant/pkg/providers/broker"
 )
+
+// earnWindowMeanPct delegates to deltaneutral.EarnWindowMeanPct (the canonical
+// trailing-window earn average shared with the gateway monitor).
+func earnWindowMeanPct(points []broker.EarnRatePoint, window time.Duration, now time.Time) (float64, int) {
+	return deltaneutral.EarnWindowMeanPct(points, window, now)
+}
 
 // yieldDigest fetches all yield series points (time-ASC) for a plan and returns
 // a deduplicated [first, middle, latest] slice for a compact trend digest.
@@ -58,12 +65,12 @@ func formatYieldDigest(points []deltaneutral.SnapshotSeriesPoint) string {
 
 // CostEstimates holds live-computed cost and yield estimates for a DN plan.
 type CostEstimates struct {
-	EntryCostUSDT        float64
-	ExitCostUSDT         float64
-	DailyFundingUSDT     float64 // funding leg only
-	DailyEarnUSDT        float64 // earn leg only
-	DailyCombinedUSDT    float64 // funding + earn
-	BreakevenFundingDays float64 // breakeven using funding only
+	EntryCostUSDT         float64
+	ExitCostUSDT          float64
+	DailyFundingUSDT      float64 // funding leg only
+	DailyEarnUSDT         float64 // earn leg only
+	DailyCombinedUSDT     float64 // funding + earn
+	BreakevenFundingDays  float64 // breakeven using funding only
 	BreakevenCombinedDays float64 // breakeven using funding + earn
 }
 
@@ -130,14 +137,27 @@ type LiveProjection struct {
 	FundingRateRaw        float64 // per-period rate for display
 	FundingInterval       string  // e.g. "8h"
 	NotionalUSDT          float64 // actual notional used for yield math
-	// Historical funding averages (zero when history fetch fails)
-	Funding7dAPYPct   float64
-	Funding7dRateRaw  float64
-	Funding7dCount    int
-	Funding14dAPYPct  float64
-	Funding14dRateRaw float64
-	Funding14dCount   int
-	Warnings              []string
+	// Historical funding averages over 3M/6M/12M windows (zero when history fetch fails)
+	Funding90dAPYPct   float64
+	Funding90dRateRaw  float64
+	Funding90dCount    int
+	Funding180dAPYPct  float64
+	Funding180dRateRaw float64
+	Funding180dCount   int
+	Funding365dAPYPct  float64
+	Funding365dRateRaw float64
+	Funding365dCount   int
+	// Historical earn (flexible-savings) averages over 3M/6M/12M windows, as percent.
+	// Each value falls back to the current EarnAPYPct when the window has no rate-history
+	// points, so combined math is always valid. The matching *Count is 0 when the value
+	// is the current-rate fallback (no real history), > 0 when it is a true avg.
+	Earn90dAPYPct  float64
+	Earn90dCount   int
+	Earn180dAPYPct float64
+	Earn180dCount  int
+	Earn365dAPYPct float64
+	Earn365dCount  int
+	Warnings       []string
 }
 
 // FetchLiveProjection fetches the current funding rate and earn APY for a plan's
@@ -165,23 +185,29 @@ func FetchLiveProjection(ctx context.Context, cfg *config.Config, plan deltaneut
 			proj.FundingAPYPct = deltaneutral.AnnualizeFundingRatePct(proj.FundingRateRaw, fr.Interval)
 		}
 
-		// Fetch historical funding rates for 7d/14d context.
-		// 200 records covers ≥14d for most perps (42 periods at 8h, 84 at 4h).
-		history, hErr := fp.FetchPublicFundingRateHistory(ctx, plan.FuturesSymbol, nil, 200)
+		// Fetch historical funding rates for 3M/6M/12M context.
+		// limit>100 enables ccxt pagination; ~1100 records cover 365d at 8h cadence.
+		history, hErr := fp.FetchPublicFundingRateHistory(ctx, plan.FuturesSymbol, nil, 1100)
 		if hErr != nil {
 			proj.Warnings = append(proj.Warnings, fmt.Sprintf("funding history: %v", hErr))
 		} else {
-			w7 := computeFundingStatsWindow(history, 7*24*time.Hour)
-			w14 := computeFundingStatsWindow(history, 14*24*time.Hour)
-			if w7.count > 0 {
-				proj.Funding7dRateRaw = w7.mean
-				proj.Funding7dAPYPct = deltaneutral.AnnualizeFundingRatePct(w7.mean, &proj.FundingInterval)
-				proj.Funding7dCount = w7.count
+			w90 := computeFundingStatsWindow(history, 90*24*time.Hour)
+			w180 := computeFundingStatsWindow(history, 180*24*time.Hour)
+			w365 := computeFundingStatsWindow(history, 365*24*time.Hour)
+			if w90.count > 0 {
+				proj.Funding90dRateRaw = w90.mean
+				proj.Funding90dAPYPct = deltaneutral.AnnualizeFundingRatePct(w90.mean, &proj.FundingInterval)
+				proj.Funding90dCount = w90.count
 			}
-			if w14.count > 0 {
-				proj.Funding14dRateRaw = w14.mean
-				proj.Funding14dAPYPct = deltaneutral.AnnualizeFundingRatePct(w14.mean, &proj.FundingInterval)
-				proj.Funding14dCount = w14.count
+			if w180.count > 0 {
+				proj.Funding180dRateRaw = w180.mean
+				proj.Funding180dAPYPct = deltaneutral.AnnualizeFundingRatePct(w180.mean, &proj.FundingInterval)
+				proj.Funding180dCount = w180.count
+			}
+			if w365.count > 0 {
+				proj.Funding365dRateRaw = w365.mean
+				proj.Funding365dAPYPct = deltaneutral.AnnualizeFundingRatePct(w365.mean, &proj.FundingInterval)
+				proj.Funding365dCount = w365.count
 			}
 		}
 	}
@@ -191,6 +217,7 @@ func FetchLiveProjection(ctx context.Context, cfg *config.Config, plan deltaneut
 	if idx := strings.Index(plan.SpotSymbol, "/"); idx > 0 {
 		baseCur = strings.ToUpper(plan.SpotSymbol[:idx])
 	}
+	var bestProductID, bestProductType string
 	ep, err := earnProvider(ctx, cfg, plan.SpotProvider, plan.SpotAccount)
 	if err != nil {
 		proj.Warnings = append(proj.Warnings, fmt.Sprintf("earn provider: %v", err))
@@ -204,8 +231,38 @@ func FetchLiveProjection(ctx context.Context, cfg *config.Config, plan deltaneut
 					apy := p.APY * 100
 					if apy > proj.EarnAPYPct {
 						proj.EarnAPYPct = apy
+						bestProductID = p.ProductID
+						bestProductType = p.Type
 					}
 				}
+			}
+		}
+	}
+
+	// --- Historical earn (flexible-savings) averages ---
+	// Default every window to the current earn rate so combined math is always
+	// valid; override with a true trailing average when rate history is available.
+	proj.Earn90dAPYPct = proj.EarnAPYPct
+	proj.Earn180dAPYPct = proj.EarnAPYPct
+	proj.Earn365dAPYPct = proj.EarnAPYPct
+	// staking-defi products have a flat APY with no public rate-history endpoint;
+	// the current rate already represents every window, so skip the history fetch.
+	if ep != nil && proj.EarnAPYPct > 0 && bestProductType != "staking-defi" {
+		now := time.Now()
+		// since=now-364d with a generous limit triggers adapter pagination + caching.
+		earnSince := now.Add(-364 * 24 * time.Hour).UnixMilli()
+		points, hErr := ep.FetchFlexibleEarnRateHistory(ctx, bestProductID, baseCur, &earnSince, 9000)
+		if hErr != nil {
+			proj.Warnings = append(proj.Warnings, fmt.Sprintf("earn history: %v", hErr))
+		} else {
+			if m, n := earnWindowMeanPct(points, 90*24*time.Hour, now); n > 0 {
+				proj.Earn90dAPYPct, proj.Earn90dCount = m, n
+			}
+			if m, n := earnWindowMeanPct(points, 180*24*time.Hour, now); n > 0 {
+				proj.Earn180dAPYPct, proj.Earn180dCount = m, n
+			}
+			if m, n := earnWindowMeanPct(points, 365*24*time.Hour, now); n > 0 {
+				proj.Earn365dAPYPct, proj.Earn365dCount = m, n
 			}
 		}
 	}
@@ -252,23 +309,40 @@ func FormatLiveProjection(p *LiveProjection) string {
 	// Funding APY — current + historical averages
 	sb.WriteString(fmt.Sprintf("  Funding APY (current): %+.4f%%  (rate %.6f, interval %s)\n",
 		p.FundingAPYPct, p.FundingRateRaw, p.FundingInterval))
-	if p.Funding7dCount > 0 {
-		sb.WriteString(fmt.Sprintf("  Funding APY (7d avg):  %+.4f%%  (avg rate %.6f, %d periods)\n",
-			p.Funding7dAPYPct, p.Funding7dRateRaw, p.Funding7dCount))
+	if p.Funding90dCount > 0 {
+		sb.WriteString(fmt.Sprintf("  Funding APY (3M avg):  %+.4f%%  (avg rate %.6f, %d periods)\n",
+			p.Funding90dAPYPct, p.Funding90dRateRaw, p.Funding90dCount))
 	}
-	if p.Funding14dCount > 0 {
-		sb.WriteString(fmt.Sprintf("  Funding APY (14d avg): %+.4f%%  (avg rate %.6f, %d periods)\n",
-			p.Funding14dAPYPct, p.Funding14dRateRaw, p.Funding14dCount))
+	if p.Funding180dCount > 0 {
+		sb.WriteString(fmt.Sprintf("  Funding APY (6M avg):  %+.4f%%  (avg rate %.6f, %d periods)\n",
+			p.Funding180dAPYPct, p.Funding180dRateRaw, p.Funding180dCount))
 	}
-	sb.WriteString(fmt.Sprintf("  Earn APY:              %+.4f%%\n", p.EarnAPYPct))
+	if p.Funding365dCount > 0 {
+		sb.WriteString(fmt.Sprintf("  Funding APY (12M avg): %+.4f%%  (avg rate %.6f, %d periods)\n",
+			p.Funding365dAPYPct, p.Funding365dRateRaw, p.Funding365dCount))
+	}
+	// Earn APY — current + historical averages (windowed only when real history exists)
+	sb.WriteString(fmt.Sprintf("  Earn APY (current):    %+.4f%%\n", p.EarnAPYPct))
+	if p.Earn90dCount > 0 {
+		sb.WriteString(fmt.Sprintf("  Earn APY (3M avg):     %+.4f%%  (%d points)\n", p.Earn90dAPYPct, p.Earn90dCount))
+	}
+	if p.Earn180dCount > 0 {
+		sb.WriteString(fmt.Sprintf("  Earn APY (6M avg):     %+.4f%%  (%d points)\n", p.Earn180dAPYPct, p.Earn180dCount))
+	}
+	if p.Earn365dCount > 0 {
+		sb.WriteString(fmt.Sprintf("  Earn APY (12M avg):    %+.4f%%  (%d points)\n", p.Earn365dAPYPct, p.Earn365dCount))
+	}
 
-	// Combined APY lines — current and historical if available
+	// Combined APY lines — each window pairs the matched funding + earn average
 	sb.WriteString(fmt.Sprintf("  Combined APY (current): %+.4f%%\n", p.CombinedAPYPct))
-	if p.Funding7dCount > 0 {
-		sb.WriteString(fmt.Sprintf("  Combined APY (7d avg):  %+.4f%%\n", p.Funding7dAPYPct+p.EarnAPYPct))
+	if p.Funding90dCount > 0 {
+		sb.WriteString(fmt.Sprintf("  Combined APY (3M avg):  %+.4f%%\n", p.Funding90dAPYPct+p.Earn90dAPYPct))
 	}
-	if p.Funding14dCount > 0 {
-		sb.WriteString(fmt.Sprintf("  Combined APY (14d avg): %+.4f%%\n", p.Funding14dAPYPct+p.EarnAPYPct))
+	if p.Funding180dCount > 0 {
+		sb.WriteString(fmt.Sprintf("  Combined APY (6M avg):  %+.4f%%\n", p.Funding180dAPYPct+p.Earn180dAPYPct))
+	}
+	if p.Funding365dCount > 0 {
+		sb.WriteString(fmt.Sprintf("  Combined APY (12M avg): %+.4f%%\n", p.Funding365dAPYPct+p.Earn365dAPYPct))
 	}
 	sb.WriteString("\n")
 
@@ -278,23 +352,31 @@ func FormatLiveProjection(p *LiveProjection) string {
 
 	sb.WriteString(fmt.Sprintf("  Annual funding (current): %+.2f USDT  (%.4f%% × %.2f USDT spot notional)\n",
 		p.AnnualFundingUSDT, p.FundingAPYPct, p.NotionalUSDT))
-	if p.Funding7dCount > 0 {
-		annual7d := (p.Funding7dAPYPct / 100) * p.NotionalUSDT
-		sb.WriteString(fmt.Sprintf("  Annual funding (7d avg):  %+.2f USDT\n", annual7d))
+	if p.Funding90dCount > 0 {
+		annual90d := (p.Funding90dAPYPct / 100) * p.NotionalUSDT
+		sb.WriteString(fmt.Sprintf("  Annual funding (3M avg):  %+.2f USDT\n", annual90d))
 	}
-	if p.Funding14dCount > 0 {
-		annual14d := (p.Funding14dAPYPct / 100) * p.NotionalUSDT
-		sb.WriteString(fmt.Sprintf("  Annual funding (14d avg): %+.2f USDT\n", annual14d))
+	if p.Funding180dCount > 0 {
+		annual180d := (p.Funding180dAPYPct / 100) * p.NotionalUSDT
+		sb.WriteString(fmt.Sprintf("  Annual funding (6M avg):  %+.2f USDT\n", annual180d))
+	}
+	if p.Funding365dCount > 0 {
+		annual365d := (p.Funding365dAPYPct / 100) * p.NotionalUSDT
+		sb.WriteString(fmt.Sprintf("  Annual funding (12M avg): %+.2f USDT\n", annual365d))
 	}
 	sb.WriteString(fmt.Sprintf("  Annual earn:              %+.2f USDT\n", p.AnnualEarnUSDT))
 	sb.WriteString(fmt.Sprintf("  Annual combined (current):%+.2f USDT\n", p.AnnualCombinedUSDT))
-	if p.Funding7dCount > 0 {
-		comb7d := ((p.Funding7dAPYPct + p.EarnAPYPct) / 100) * p.NotionalUSDT
-		sb.WriteString(fmt.Sprintf("  Annual combined (7d avg): %+.2f USDT\n", comb7d))
+	if p.Funding90dCount > 0 {
+		comb90d := ((p.Funding90dAPYPct + p.Earn90dAPYPct) / 100) * p.NotionalUSDT
+		sb.WriteString(fmt.Sprintf("  Annual combined (3M avg): %+.2f USDT\n", comb90d))
 	}
-	if p.Funding14dCount > 0 {
-		comb14d := ((p.Funding14dAPYPct + p.EarnAPYPct) / 100) * p.NotionalUSDT
-		sb.WriteString(fmt.Sprintf("  Annual combined (14d avg):%+.2f USDT\n", comb14d))
+	if p.Funding180dCount > 0 {
+		comb180d := ((p.Funding180dAPYPct + p.Earn180dAPYPct) / 100) * p.NotionalUSDT
+		sb.WriteString(fmt.Sprintf("  Annual combined (6M avg): %+.2f USDT\n", comb180d))
+	}
+	if p.Funding365dCount > 0 {
+		comb365d := ((p.Funding365dAPYPct + p.Earn365dAPYPct) / 100) * p.NotionalUSDT
+		sb.WriteString(fmt.Sprintf("  Annual combined (12M avg):%+.2f USDT\n", comb365d))
 	}
 	sb.WriteString("\n")
 
@@ -305,21 +387,28 @@ func FormatLiveProjection(p *LiveProjection) string {
 	if p.BreakevenCombinedDays > 0 {
 		sb.WriteString(fmt.Sprintf("  Breakeven (current, funding + earn): %.2f days\n", p.BreakevenCombinedDays))
 	}
-	// Breakeven at 7d/14d average rates (more stable estimate)
+	// Breakeven at 3M/6M average rates (more stable estimate)
 	const spotFeeDisp, futFeeDisp = 0.001, 0.0005
 	roundTripDisp := 2 * (p.NotionalUSDT*spotFeeDisp + p.NotionalUSDT*futFeeDisp)
-	if p.Funding7dCount > 0 {
-		daily7d := (p.Funding7dAPYPct / 100 / 365) * p.NotionalUSDT
-		dailyComb7d := daily7d + (p.EarnAPYPct/100/365)*p.NotionalUSDT
-		if dailyComb7d > 0 {
-			sb.WriteString(fmt.Sprintf("  Breakeven (7d avg, funding + earn):  %.2f days\n", roundTripDisp/dailyComb7d))
+	if p.Funding90dCount > 0 {
+		daily90d := (p.Funding90dAPYPct / 100 / 365) * p.NotionalUSDT
+		dailyComb90d := daily90d + (p.Earn90dAPYPct/100/365)*p.NotionalUSDT
+		if dailyComb90d > 0 {
+			sb.WriteString(fmt.Sprintf("  Breakeven (3M avg, funding + earn):  %.2f days\n", roundTripDisp/dailyComb90d))
 		}
 	}
-	if p.Funding14dCount > 0 {
-		daily14d := (p.Funding14dAPYPct / 100 / 365) * p.NotionalUSDT
-		dailyComb14d := daily14d + (p.EarnAPYPct/100/365)*p.NotionalUSDT
-		if dailyComb14d > 0 {
-			sb.WriteString(fmt.Sprintf("  Breakeven (14d avg, funding + earn): %.2f days\n", roundTripDisp/dailyComb14d))
+	if p.Funding180dCount > 0 {
+		daily180d := (p.Funding180dAPYPct / 100 / 365) * p.NotionalUSDT
+		dailyComb180d := daily180d + (p.Earn180dAPYPct/100/365)*p.NotionalUSDT
+		if dailyComb180d > 0 {
+			sb.WriteString(fmt.Sprintf("  Breakeven (6M avg, funding + earn):  %.2f days\n", roundTripDisp/dailyComb180d))
+		}
+	}
+	if p.Funding365dCount > 0 {
+		daily365d := (p.Funding365dAPYPct / 100 / 365) * p.NotionalUSDT
+		dailyComb365d := daily365d + (p.Earn365dAPYPct/100/365)*p.NotionalUSDT
+		if dailyComb365d > 0 {
+			sb.WriteString(fmt.Sprintf("  Breakeven (12M avg, funding + earn): %.2f days\n", roundTripDisp/dailyComb365d))
 		}
 	}
 

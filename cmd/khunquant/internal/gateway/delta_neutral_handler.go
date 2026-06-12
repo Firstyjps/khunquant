@@ -71,7 +71,8 @@ func handleDeltaNeutralMonitorJob(
 
 	// Fetch live state for futures leg.
 	futuresState := deltaneutral.FuturesState{}
-	var futureFundingRate *ccxt.FundingRate // Store funding rate if available.
+	var futureFundingRate *ccxt.FundingRate      // Store funding rate if available.
+	var fundingHistory []ccxt.FundingRateHistory // Trailing funding history for windowed averages.
 	futureFetcher, err := broker.CreateProviderForAccount(plan.FuturesProvider, plan.FuturesAccount, cfg)
 	if err != nil {
 		logger.WarnCF("dn-monitor", "Failed to create futures provider", map[string]any{
@@ -150,12 +151,28 @@ func handleDeltaNeutralMonitorJob(
 			} else {
 				futureFundingRate = &fr
 			}
+
+			// Fetch trailing funding history (≥1y) for windowed combined-APY averages.
+			// limit>100 enables ccxt pagination; ~1100 records cover 365d at 8h cadence
+			// (3/day → ~366d). Non-fatal: leaves fundingHistory nil when unavailable.
+			if hist, histErr := futuresProv.FetchPublicFundingRateHistory(ctx, plan.FuturesSymbol, nil, 1100); histErr == nil {
+				fundingHistory = hist
+			} else {
+				logger.WarnCF("dn-monitor", "Failed to fetch funding history (windows)", map[string]any{
+					"plan_id": planID, "error": histErr.Error(),
+				})
+			}
 		}
 	}
 
 	// earnAPYPct holds the best flexible-earn APY (%) for the base asset.
 	// Set inside the earn-provider block below; 0 when unavailable.
 	earnAPYPct := 0.0
+	// Trailing earn (flexible-savings) window averages (%) and their point counts;
+	// captured inside the earn-provider block below. 0 when unavailable.
+	var earn90dPct, earn180dPct, earn365dPct float64
+	var earn90dN, earn180dN, earn365dN int
+	var bestEarnProductID, bestEarnProductType string
 
 	// Fetch live state for spot leg.
 	spotState := deltaneutral.SpotState{}
@@ -236,6 +253,8 @@ func handleDeltaNeutralMonitorJob(
 								apyPct := prod.APY * 100
 								if apyPct > earnAPYPct {
 									earnAPYPct = apyPct
+									bestEarnProductID = prod.ProductID
+									bestEarnProductType = prod.Type
 								}
 							}
 						}
@@ -243,6 +262,22 @@ func handleDeltaNeutralMonitorJob(
 						logger.WarnCF("dn-monitor", "Failed to fetch earn products (APY)", map[string]any{
 							"plan_id": planID, "error": prodErr.Error(),
 						})
+					}
+
+					// Trailing earn-rate averages (90d/180d/365d). staking-defi has a flat
+					// APY with no rate-history endpoint, so skip it. since=now-364d with a
+					// generous limit triggers adapter pagination + caching. Non-fatal.
+					if earnAPYPct > 0 && bestEarnProductType != "staking-defi" {
+						earnSince := now.Add(-364 * 24 * time.Hour).UnixMilli()
+						if points, rhErr := ep.FetchFlexibleEarnRateHistory(ctx, bestEarnProductID, baseCurUpper, &earnSince, 9000); rhErr == nil {
+							earn90dPct, earn90dN = deltaneutral.EarnWindowMeanPct(points, 90*24*time.Hour, now)
+							earn180dPct, earn180dN = deltaneutral.EarnWindowMeanPct(points, 180*24*time.Hour, now)
+							earn365dPct, earn365dN = deltaneutral.EarnWindowMeanPct(points, 365*24*time.Hour, now)
+						} else {
+							logger.WarnCF("dn-monitor", "Failed to fetch earn rate history (windows)", map[string]any{
+								"plan_id": planID, "error": rhErr.Error(),
+							})
+						}
 					}
 				}
 
@@ -287,24 +322,66 @@ func handleDeltaNeutralMonitorJob(
 		// For now, keep RecentRates empty; in production, you'd fetch history.
 	}
 
+	// Compute price-basis spreads (safe when either price is zero — helpers return 0).
+	entrySpreadPct := deltaneutral.EntrySpreadPct(futuresState.MarkPrice, spotState.Price)
+	exitSpreadPct := deltaneutral.ExitSpreadPct(spotState.Price, futuresState.MarkPrice)
+
 	// Build evaluation input.
 	input := deltaneutral.EvaluationInput{
-		Plan:         *plan,
-		SpotState:    spotState,
-		FuturesState: futuresState,
-		FundingInfo:  fundingInfo,
-		Now:          now,
+		Plan:           *plan,
+		SpotState:      spotState,
+		FuturesState:   futuresState,
+		FundingInfo:    fundingInfo,
+		EntrySpreadPct: entrySpreadPct,
+		ExitSpreadPct:  exitSpreadPct,
+		Now:            now,
 	}
 
 	// Run deterministic health evaluation.
 	eval := deltaneutral.Evaluate(input)
 
 	// Compute and attach yield metrics.
-	if futureFundingRate != nil && futureFundingRate.FundingRate != nil {
-		eval.Snapshot.FundingAPYPct = deltaneutral.AnnualizeFundingRatePct(*futureFundingRate.FundingRate, futureFundingRate.Interval)
+	var fundingInterval *string
+	if futureFundingRate != nil {
+		fundingInterval = futureFundingRate.Interval
+		if futureFundingRate.FundingRate != nil {
+			eval.Snapshot.FundingAPYPct = deltaneutral.AnnualizeFundingRatePct(*futureFundingRate.FundingRate, fundingInterval)
+		}
 	}
 	eval.Snapshot.EarnAPYPct = earnAPYPct
 	eval.Snapshot.CombinedAPYPct = eval.Snapshot.FundingAPYPct + earnAPYPct
+
+	// Trailing earn windows (3M/6M/12M): fall back to the current earn rate when a
+	// window has no rate-history points so the matched combined math is always valid.
+	eval.Snapshot.Earn90dAPYPct = earnAPYPct
+	eval.Snapshot.Earn180dAPYPct = earnAPYPct
+	eval.Snapshot.Earn365dAPYPct = earnAPYPct
+	if earn90dN > 0 {
+		eval.Snapshot.Earn90dAPYPct = earn90dPct
+	}
+	if earn180dN > 0 {
+		eval.Snapshot.Earn180dAPYPct = earn180dPct
+	}
+	if earn365dN > 0 {
+		eval.Snapshot.Earn365dAPYPct = earn365dPct
+	}
+
+	// Matched-window combined APY = funding window avg (annualised) + earn window avg.
+	// Each funding window falls back to the current funding APY when no history exists.
+	fundingWindowAPY := func(window time.Duration) float64 {
+		if mean, n := deltaneutral.FundingWindowMeanRate(fundingHistory, window, now); n > 0 {
+			return deltaneutral.AnnualizeFundingRatePct(mean, fundingInterval)
+		}
+		return eval.Snapshot.FundingAPYPct
+	}
+	// Persist the funding windows too (OKX funding history caps at ~3 months, so its
+	// 180d/365d collapse to the 90d value; Binance retains >1y and stays distinct).
+	eval.Snapshot.Funding90dAPYPct = fundingWindowAPY(90 * 24 * time.Hour)
+	eval.Snapshot.Funding180dAPYPct = fundingWindowAPY(180 * 24 * time.Hour)
+	eval.Snapshot.Funding365dAPYPct = fundingWindowAPY(365 * 24 * time.Hour)
+	eval.Snapshot.Combined90dAPYPct = eval.Snapshot.Funding90dAPYPct + eval.Snapshot.Earn90dAPYPct
+	eval.Snapshot.Combined180dAPYPct = eval.Snapshot.Funding180dAPYPct + eval.Snapshot.Earn180dAPYPct
+	eval.Snapshot.Combined365dAPYPct = eval.Snapshot.Funding365dAPYPct + eval.Snapshot.Earn365dAPYPct
 
 	// Always save snapshot.
 	eval.Snapshot.PlanID = planID

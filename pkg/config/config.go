@@ -1101,8 +1101,8 @@ type ToolsConfig struct {
 	OpenDeltaNeutralPosition      ToolConfig `json:"open_delta_neutral_position" envPrefix:"KHUNQUANT_TOOLS_OPEN_DELTA_NEUTRAL_POSITION_"`
 	UnwindDeltaNeutralPosition    ToolConfig `json:"unwind_delta_neutral_position" envPrefix:"KHUNQUANT_TOOLS_UNWIND_DELTA_NEUTRAL_POSITION_"`
 	ResizeDeltaNeutralPosition    ToolConfig `json:"resize_delta_neutral_position" envPrefix:"KHUNQUANT_TOOLS_RESIZE_DELTA_NEUTRAL_POSITION_"`
-	ScanDeltaNeutralOpportunities  ToolConfig `json:"scan_delta_neutral_opportunities"   envPrefix:"KHUNQUANT_TOOLS_SCAN_DELTA_NEUTRAL_OPPORTUNITIES_"`
-	RenderDeltaNeutralYieldChart   ToolConfig `json:"render_delta_neutral_yield_chart"  envPrefix:"KHUNQUANT_TOOLS_RENDER_DELTA_NEUTRAL_YIELD_CHART_"`
+	ScanDeltaNeutralOpportunities ToolConfig `json:"scan_delta_neutral_opportunities"   envPrefix:"KHUNQUANT_TOOLS_SCAN_DELTA_NEUTRAL_OPPORTUNITIES_"`
+	RenderDeltaNeutralYieldChart  ToolConfig `json:"render_delta_neutral_yield_chart"  envPrefix:"KHUNQUANT_TOOLS_RENDER_DELTA_NEUTRAL_YIELD_CHART_"`
 
 	// Earn (Track G — Savings/Staking)
 	EarnOverview       ToolConfig `json:"earn_overview"        envPrefix:"KHUNQUANT_TOOLS_EARN_OVERVIEW_"`

@@ -42,8 +42,9 @@ const (
 
 // EntryRules defines policy for plan entry
 type EntryRules struct {
-	MinFundingRate float64 `json:"min_funding_rate"`
-	MaxSlippageBps float64 `json:"max_slippage_bps"`
+	MinFundingRate    float64 `json:"min_funding_rate"`
+	MaxSlippageBps    float64 `json:"max_slippage_bps"`
+	MinEntrySpreadPct float64 `json:"min_entry_spread_pct"` // 0 = disabled; entry is blocked when live spread < this value
 }
 
 // ExitRules defines policy for plan exit
@@ -51,6 +52,7 @@ type ExitRules struct {
 	ProfitTargetUSDT      float64 `json:"profit_target_usdt"`
 	MaxDrawdownUSDT       float64 `json:"max_drawdown_usdt"`
 	FundingReversalCycles int     `json:"funding_reversal_cycles"`
+	TargetExitSpreadPct   float64 `json:"target_exit_spread_pct"` // 0 = disabled; triggers unwind recommendation when exit spread >= this value
 }
 
 // RiskPolicy defines risk thresholds and escalation rules for a plan
@@ -137,12 +139,30 @@ type MonitorSnapshot struct {
 	FuturesNotionalUSDT      float64   `json:"futures_notional_usdt"`
 	FuturesUnrealizedPnLUSDT float64   `json:"futures_unrealized_pnl_usdt"`
 	CurrentFundingRate       float64   `json:"current_funding_rate"`
-	FundingAPYPct            float64   `json:"funding_apy_pct"`    // current rate annualised as a percentage
-	EarnAPYPct               float64   `json:"earn_apy_pct"`       // best flexible-earn APY for base asset, %
-	CombinedAPYPct           float64   `json:"combined_apy_pct"`   // FundingAPYPct + EarnAPYPct
+	FundingAPYPct            float64   `json:"funding_apy_pct"`  // current rate annualised as a percentage
+	EarnAPYPct               float64   `json:"earn_apy_pct"`     // best flexible-earn APY for base asset, %
+	CombinedAPYPct           float64   `json:"combined_apy_pct"` // FundingAPYPct + EarnAPYPct
+	// Trailing funding averages over 3M/6M/12M windows (annualised), percent. Each
+	// falls back to the current funding APY when the window has no history. NOTE:
+	// OKX funding-rate history is capped at ~3 months, so OKX 180d/365d collapse to
+	// the 90d value; Binance retains >1y and yields distinct values.
+	Funding90dAPYPct  float64 `json:"funding_apy_90d_pct"`
+	Funding180dAPYPct float64 `json:"funding_apy_180d_pct"`
+	Funding365dAPYPct float64 `json:"funding_apy_365d_pct"`
+	// Trailing earn (flexible-savings) averages over 3M/6M/12M windows, percent.
+	// 0 when rate history is unavailable.
+	Earn90dAPYPct  float64 `json:"earn_apy_90d_pct"`
+	Earn180dAPYPct float64 `json:"earn_apy_180d_pct"`
+	Earn365dAPYPct float64 `json:"earn_apy_365d_pct"`
+	// Matched-window combined APY: funding window avg + earn window avg, percent.
+	Combined90dAPYPct        float64   `json:"combined_apy_90d_pct"`
+	Combined180dAPYPct       float64   `json:"combined_apy_180d_pct"`
+	Combined365dAPYPct       float64   `json:"combined_apy_365d_pct"`
 	EstimatedNextFundingUSDT float64   `json:"estimated_next_funding_usdt"`
 	FundingState             string    `json:"funding_state"`
 	DeltaDriftPct            float64   `json:"delta_drift_pct"`
+	EntrySpreadPct           float64   `json:"entry_spread_pct"` // (futures_mark_price - spot_price) / spot_price * 100
+	ExitSpreadPct            float64   `json:"exit_spread_pct"`  // (spot_price - futures_mark_price) / futures_mark_price * 100
 	LiquidationPrice         float64   `json:"liquidation_price"`
 	LiquidationDistancePct   float64   `json:"liquidation_distance_pct"`
 	MarginRatioPct           float64   `json:"margin_ratio_pct"`
@@ -188,11 +208,13 @@ type FundingInfo struct {
 
 // EvaluationInput holds all inputs required for deterministic health evaluation
 type EvaluationInput struct {
-	Plan         Plan
-	SpotState    SpotState
-	FuturesState FuturesState
-	FundingInfo  FundingInfo
-	Now          time.Time
+	Plan           Plan
+	SpotState      SpotState
+	FuturesState   FuturesState
+	FundingInfo    FundingInfo
+	EntrySpreadPct float64 // pre-computed entry spread: (futuresMarkPrice - spotPrice) / spotPrice * 100
+	ExitSpreadPct  float64 // pre-computed exit spread: (spotPrice - futuresMarkPrice) / futuresMarkPrice * 100
+	Now            time.Time
 }
 
 // HealthEvaluation is the output of the deterministic health evaluator

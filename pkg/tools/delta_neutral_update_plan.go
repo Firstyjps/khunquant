@@ -68,6 +68,26 @@ func (t *UpdateDeltaNeutralPlanTool) Parameters() map[string]any {
 				"enum":        []string{"30s", "1m", "3m", "5m", "10m", "15m", "30m", "1h", "2h", "3h", "4h", "8h", "1d"},
 				"description": "Change the monitor interval. Recreates the cron job when changed.",
 			},
+			"entry_rules": map[string]any{
+				"type":        "object",
+				"description": "Update specific entry rules (partial update).",
+				"properties": map[string]any{
+					"min_entry_spread_pct": map[string]any{
+						"type":        "number",
+						"description": "Minimum entry spread (%) required to open the position. 0 = disabled.",
+					},
+				},
+			},
+			"exit_rules": map[string]any{
+				"type":        "object",
+				"description": "Update specific exit rules (partial update).",
+				"properties": map[string]any{
+					"target_exit_spread_pct": map[string]any{
+						"type":        "number",
+						"description": "Target exit spread (%) that triggers an unwind recommendation. 0 = disabled.",
+					},
+				},
+			},
 			"risk_policy": map[string]any{
 				"type":        "object",
 				"description": "Update specific risk thresholds (partial update).",
@@ -304,6 +324,22 @@ func (t *UpdateDeltaNeutralPlanTool) Execute(ctx context.Context, args map[strin
 			t.cronService.UpdateJob(job)
 			plan.CronJobID = job.ID
 			plan.MonitorInterval = newInterval
+			changed = true
+		}
+	}
+
+	// Update entry rules (partial)
+	if entryRulesMap, ok := args["entry_rules"].(map[string]any); ok {
+		if v, ok := entryRulesMap["min_entry_spread_pct"].(float64); ok {
+			plan.EntryRules.MinEntrySpreadPct = v
+			changed = true
+		}
+	}
+
+	// Update exit rules (partial)
+	if exitRulesMap, ok := args["exit_rules"].(map[string]any); ok {
+		if v, ok := exitRulesMap["target_exit_spread_pct"].(float64); ok {
+			plan.ExitRules.TargetExitSpreadPct = v
 			changed = true
 		}
 	}

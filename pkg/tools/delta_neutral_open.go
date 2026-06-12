@@ -36,7 +36,7 @@ func (t *OpenDeltaNeutralPositionTool) Parameters() map[string]any {
 		"properties": map[string]any{
 			"plan_id": map[string]any{
 				"type":        "integer",
-			"description": "ID of the delta-neutral plan to open. Accepts draft, ready, or failed (retry).",
+				"description": "ID of the delta-neutral plan to open. Accepts draft, ready, or failed (retry).",
 			},
 			"confirm": map[string]any{
 				"type":        "boolean",
@@ -101,9 +101,42 @@ func (t *OpenDeltaNeutralPositionTool) Execute(ctx context.Context, args map[str
 			WithError(broker.ErrRateLimited)
 	}
 
+	// --- Entry spread gate ---
+	// Fetch the live spread once and reuse it for both the gate and the dry-run
+	// review. When a minimum is configured the gate fails CLOSED: if the live
+	// spread cannot be determined we block rather than silently allowing entry.
+	liveSpread, _, _, spreadOK, spreadDetail := t.fetchLiveEntrySpread(ctx, plan)
+	if plan.EntryRules.MinEntrySpreadPct != 0 {
+		if !spreadOK {
+			return ErrorResult(fmt.Sprintf(
+				"⛔ Entry spread gate: a minimum spread of %.4f%% is required but the live spread "+
+					"could not be determined (%s). Refusing to open — retry once market data is available, "+
+					"or clear entry_rules.min_entry_spread_pct to disable the gate.",
+				plan.EntryRules.MinEntrySpreadPct, spreadDetail))
+		}
+		if liveSpread < plan.EntryRules.MinEntrySpreadPct {
+			return ErrorResult(fmt.Sprintf(
+				"⛔ Entry spread gate: current spread %.4f%% is below minimum %.4f%%.\n"+
+					"Use update_delta_neutral_plan to adjust entry_rules.min_entry_spread_pct, or wait for the spread to improve.",
+				liveSpread, plan.EntryRules.MinEntrySpreadPct))
+		}
+	}
+
 	// --- Dry-run gate (§7.8) ---
 	if !confirm {
 		review := formatExecutionReview(plan)
+
+		// Show live spread in dry-run output (reusing the value fetched above).
+		minStr := "disabled"
+		if plan.EntryRules.MinEntrySpreadPct != 0 {
+			minStr = fmt.Sprintf("%.4f%%", plan.EntryRules.MinEntrySpreadPct)
+		}
+		if spreadOK {
+			review += fmt.Sprintf("\nLive Entry Spread: %.4f%% (min required: %s)", liveSpread, minStr)
+		} else {
+			review += fmt.Sprintf("\nLive Entry Spread: unavailable (%s) (min required: %s)", spreadDetail, minStr)
+		}
+
 		if plan.CrossExchange {
 			review += "\n[CROSS-EXCHANGE WARNING] Spot and futures on different exchanges — slippage and timing risk."
 		}
@@ -514,6 +547,36 @@ func (t *OpenDeltaNeutralPositionTool) executeSpotLeg(ctx context.Context, plan 
 }
 
 // formatExecutionReview formats the execution review for dry-run output (§7.8).
+// fetchLiveEntrySpread fetches the current entry spread (futures mark vs spot last)
+// for a plan. Returns the spread %, the underlying prices, ok=true on success, and a
+// human-readable detail string describing the failure when ok=false.
+func (t *OpenDeltaNeutralPositionTool) fetchLiveEntrySpread(ctx context.Context, plan *deltaneutral.Plan) (spread, markPrice, spotPrice float64, ok bool, detail string) {
+	sp, spErr := broker.CreateProviderForAccount(plan.SpotProvider, plan.SpotAccount, t.cfg)
+	if spErr != nil {
+		return 0, 0, 0, false, fmt.Sprintf("spot provider: %v", spErr)
+	}
+	md, isMD := sp.(broker.MarketDataProvider)
+	if !isMD {
+		return 0, 0, 0, false, "spot provider does not support market data"
+	}
+	ticker, tickerErr := md.FetchTicker(ctx, plan.SpotSymbol)
+	if tickerErr != nil || ticker.Last == nil || *ticker.Last <= 0 {
+		return 0, 0, 0, false, fmt.Sprintf("spot price unavailable: %v", tickerErr)
+	}
+	spotPrice = *ticker.Last
+	fp, fpErr := futuresProvider(ctx, t.cfg, plan.FuturesProvider, plan.FuturesAccount)
+	if fpErr != nil {
+		return 0, 0, 0, false, fmt.Sprintf("futures provider: %v", fpErr)
+	}
+	mp, mpErr := fp.FetchFuturesMarkPrice(ctx, plan.FuturesSymbol)
+	if mpErr != nil || mp <= 0 {
+		return 0, 0, 0, false, fmt.Sprintf("futures mark price unavailable: %v", mpErr)
+	}
+	markPrice = mp
+	spread = deltaneutral.EntrySpreadPct(markPrice, spotPrice)
+	return spread, markPrice, spotPrice, true, ""
+}
+
 func formatExecutionReview(plan *deltaneutral.Plan) string {
 	return fmt.Sprintf(
 		"Execution review (DRY-RUN):\n"+

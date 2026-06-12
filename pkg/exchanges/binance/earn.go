@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"time"
 
 	ccxt "github.com/ccxt/ccxt/go/v4"
 
@@ -265,9 +266,16 @@ func (a *BinanceBrokerAdapter) SetFlexibleAutoSubscribe(ctx context.Context, pro
 // FetchFlexibleEarnRateHistory returns historical rate data for a flexible earn product.
 // Calls /sapi/v1/simple-earn/flexible/history/rateHistory. Requires authentication.
 // The response annualPercentageRate is already a fraction (0.05 == 5% APY).
+// Points are DAILY (aprPeriod=DAY). The endpoint serves up to a 1-year span and
+// 100 rows per page, so multi-month windows are paged via `current`. When `since`
+// is set it bounds startTime (clamped to <=1y ago per Binance's max span); else
+// the latest `limit` points are returned. Results are cached (EarnRateHistoryTTL).
 func (a *BinanceBrokerAdapter) FetchFlexibleEarnRateHistory(ctx context.Context, productID, asset string, since *int64, limit int) ([]broker.EarnRatePoint, error) {
 	if err := a.requireAuth(); err != nil {
 		return nil, err
+	}
+	if cached, ok := broker.EarnRateHistoryCacheGet("binance", asset, since); ok {
+		return cached, nil
 	}
 	if productID == "" {
 		var err error
@@ -277,30 +285,75 @@ func (a *BinanceBrokerAdapter) FetchFlexibleEarnRateHistory(ctx context.Context,
 		}
 	}
 	var points []broker.EarnRatePoint
-	err := catchPanic(func() error {
-		const size = 100
-		params := map[string]interface{}{"productId": productID, "size": size}
+	const size = 100
+	appendPage := func(params map[string]interface{}) (int, error) {
 		res := <-a.spot.Core.SapiGetSimpleEarnFlexibleHistoryRateHistory(params)
 		if ccxt.IsError(res) {
-			return ccxt.CreateReturnError(res)
+			return 0, ccxt.CreateReturnError(res)
 		}
 		rows := earnRows(res)
 		for _, row := range rows {
-			rate := earnAsFloat(row["annualPercentageRate"])
-			timestamp := int64(earnAsFloat(row["time"]))
 			points = append(points, broker.EarnRatePoint{
-				Rate:      rate,
-				Timestamp: timestamp,
+				Rate:      earnAsFloat(row["annualPercentageRate"]),
+				Timestamp: int64(earnAsFloat(row["time"])),
 			})
 		}
-		// Cap by limit if specified (caller may pass 0 for no limit).
-		if limit > 0 && len(points) > limit {
-			points = points[:limit]
+		return len(rows), nil
+	}
+	err := catchPanic(func() error {
+		if since == nil {
+			// Latest-N request: Binance returns the recent ~30d window by default;
+			// page via `current` until a short page or the requested limit.
+			for page := 1; page <= 20; page++ {
+				n, e := appendPage(map[string]interface{}{
+					"productId": productID, "aprPeriod": "DAY", "size": size, "current": page,
+				})
+				if e != nil {
+					return e
+				}
+				if n < size || (limit > 0 && len(points) >= limit) {
+					break
+				}
+			}
+			return nil
+		}
+		// Windowed request: Binance caps the startTime..endTime span (documented
+		// variously as 3 months / 1 year), so walk the lookback in ≤89-day chunks —
+		// safe under either reading — paging each chunk via `current`.
+		const subWindowMs = int64(89) * 24 * 60 * 60 * 1000
+		nowMs := time.Now().UnixMilli()
+		startBound := nowMs - int64(364)*24*60*60*1000
+		if *since > startBound {
+			startBound = *since
+		}
+		for end := nowMs; end > startBound; {
+			start := end - subWindowMs
+			if start < startBound {
+				start = startBound
+			}
+			for page := 1; page <= 20; page++ {
+				n, e := appendPage(map[string]interface{}{
+					"productId": productID, "aprPeriod": "DAY", "size": size, "current": page,
+					"startTime": start, "endTime": end,
+				})
+				if e != nil {
+					return e
+				}
+				if n < size {
+					break
+				}
+			}
+			end = start - 1
 		}
 		return nil
 	})
 	if err != nil {
 		return nil, fmt.Errorf("binance earn: fetch rate history: %w", err)
 	}
+	// Trim only latest-N requests; windowed (since) callers filter by timestamp.
+	if since == nil && limit > 0 && len(points) > limit {
+		points = points[:limit]
+	}
+	broker.EarnRateHistoryCacheSet("binance", asset, since, points)
 	return points, nil
 }

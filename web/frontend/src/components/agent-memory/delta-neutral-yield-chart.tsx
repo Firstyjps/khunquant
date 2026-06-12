@@ -32,6 +32,14 @@ const RANGES: { label: string; value: DeltaNeutralSeriesRange }[] = [
 
 export function DeltaNeutralYieldChart({ planId }: { planId: number }) {
   const [range, setRange] = useState<DeltaNeutralSeriesRange>("7d")
+  const [visibleSeries, setVisibleSeries] = useState({
+    fundingRate: true,
+    fundingApy: true,
+    earnApy: true,
+    combinedApy: true,
+    entrySpread: false,
+    exitSpread: false,
+  })
 
   const { data, isLoading } = useQuery({
     queryKey: ["dn-series", planId, range],
@@ -42,54 +50,86 @@ export function DeltaNeutralYieldChart({ planId }: { planId: number }) {
   const labels =
     data?.map((d) => dayjs(d.t).format(shortRange ? "M/D HH:mm" : "MMM D")) ?? []
 
+  const allDatasets = [
+    {
+      label: "Funding Rate",
+      data: data?.map((d) => d.funding_rate) ?? [],
+      yAxisID: "yLeft",
+      borderColor: "#6366f1",
+      backgroundColor: "rgba(99,102,241,0.08)",
+      borderWidth: 1.5,
+      pointRadius: 0,
+      pointHoverRadius: 4,
+      tension: 0.3,
+    },
+    {
+      label: "Funding APY%",
+      data: data?.map((d) => d.funding_apy) ?? [],
+      yAxisID: "yRight",
+      borderColor: "#10b981",
+      backgroundColor: "rgba(16,185,129,0.08)",
+      borderWidth: 1.5,
+      pointRadius: 0,
+      pointHoverRadius: 4,
+      tension: 0.3,
+    },
+    {
+      label: "Earn APY%",
+      data: data?.map((d) => d.earn_apy) ?? [],
+      yAxisID: "yRight",
+      borderColor: "#f59e0b",
+      backgroundColor: "rgba(245,158,11,0.08)",
+      borderWidth: 1.5,
+      pointRadius: 0,
+      pointHoverRadius: 4,
+      tension: 0.3,
+    },
+    {
+      label: "Combined APY%",
+      data: data?.map((d) => d.combined_apy) ?? [],
+      yAxisID: "yRight",
+      borderColor: "#ef4444",
+      backgroundColor: "rgba(239,68,68,0.08)",
+      borderWidth: 2,
+      pointRadius: 0,
+      pointHoverRadius: 4,
+      tension: 0.3,
+    },
+    {
+      label: "Entry Spread%",
+      data: data?.map((d) => d.entry_spread_pct) ?? [],
+      yAxisID: "yCenter",
+      borderColor: "#3b82f6",
+      backgroundColor: "rgba(59,130,246,0.08)",
+      borderWidth: 1.5,
+      pointRadius: 0,
+      pointHoverRadius: 4,
+      tension: 0.3,
+    },
+    {
+      label: "Exit Spread%",
+      data: data?.map((d) => d.exit_spread_pct) ?? [],
+      yAxisID: "yCenter",
+      borderColor: "#ec4899",
+      backgroundColor: "rgba(236,72,153,0.08)",
+      borderWidth: 1.5,
+      pointRadius: 0,
+      pointHoverRadius: 4,
+      tension: 0.3,
+    },
+  ]
+
   const chartData = {
     labels,
-    datasets: [
-      {
-        label: "Funding Rate",
-        data: data?.map((d) => d.funding_rate) ?? [],
-        yAxisID: "yLeft",
-        borderColor: "#6366f1",
-        backgroundColor: "rgba(99,102,241,0.08)",
-        borderWidth: 1.5,
-        pointRadius: 0,
-        pointHoverRadius: 4,
-        tension: 0.3,
-      },
-      {
-        label: "Funding APY%",
-        data: data?.map((d) => d.funding_apy) ?? [],
-        yAxisID: "yRight",
-        borderColor: "#10b981",
-        backgroundColor: "rgba(16,185,129,0.08)",
-        borderWidth: 1.5,
-        pointRadius: 0,
-        pointHoverRadius: 4,
-        tension: 0.3,
-      },
-      {
-        label: "Earn APY%",
-        data: data?.map((d) => d.earn_apy) ?? [],
-        yAxisID: "yRight",
-        borderColor: "#f59e0b",
-        backgroundColor: "rgba(245,158,11,0.08)",
-        borderWidth: 1.5,
-        pointRadius: 0,
-        pointHoverRadius: 4,
-        tension: 0.3,
-      },
-      {
-        label: "Combined APY%",
-        data: data?.map((d) => d.combined_apy) ?? [],
-        yAxisID: "yRight",
-        borderColor: "#ef4444",
-        backgroundColor: "rgba(239,68,68,0.08)",
-        borderWidth: 2,
-        pointRadius: 0,
-        pointHoverRadius: 4,
-        tension: 0.3,
-      },
-    ],
+    datasets: allDatasets.filter((ds) => {
+      if (ds.label === "Funding Rate") return visibleSeries.fundingRate
+      if (ds.label === "Funding APY%") return visibleSeries.fundingApy
+      if (ds.label === "Earn APY%") return visibleSeries.earnApy
+      if (ds.label === "Combined APY%") return visibleSeries.combinedApy
+      if (ds.label === "Entry Spread%") return visibleSeries.entrySpread
+      if (ds.label === "Exit Spread%") return visibleSeries.exitSpread
+      return false
+    }),
   }
 
   const options: Parameters<typeof Line>[0]["options"] = {
@@ -127,6 +167,9 @@ export function DeltaNeutralYieldChart({ planId }: { planId: number }) {
             if (ctx.dataset.yAxisID === "yLeft") {
               return ` ${ctx.dataset.label}: ${raw.toFixed(6)}`
             }
+            if (ctx.dataset.yAxisID === "yCenter") {
+              return ` ${ctx.dataset.label}: ${raw.toFixed(4)}%`
+            }
             return ` ${ctx.dataset.label}: ${raw.toFixed(4)}%`
           },
         },
@@ -163,6 +206,21 @@ export function DeltaNeutralYieldChart({ planId }: { planId: number }) {
           font: { size: 10 },
         },
       },
+      yCenter: {
+        type: "linear",
+        position: "right",
+        grid: { drawOnChartArea: false },
+        ticks: {
+          color: "rgba(156,163,175,0.8)",
+          font: { size: 10 },
+          callback(v) {
+            return `${Number(v).toFixed(3)}%`
+          },
+        },
+        title: {
+          display: false,
+        },
+      },
       yRight: {
         type: "linear",
         position: "right",
@@ -186,20 +244,49 @@ export function DeltaNeutralYieldChart({ planId }: { planId: number }) {
 
   return (
     <div className="overflow-hidden rounded-lg border">
-      <div className="border-border/50 flex items-center justify-between border-b px-3 py-2">
-        <span className="text-foreground/80 text-sm font-medium">Yield History</span>
-        <div className="flex gap-0.5">
-          {RANGES.map((r) => (
+      <div className="border-border/50 border-b px-3 py-2">
+        <div className="mb-2 flex items-center justify-between">
+          <span className="text-foreground/80 text-sm font-medium">Yield History</span>
+          <div className="flex gap-0.5">
+            {RANGES.map((r) => (
+              <button
+                key={r.value}
+                onClick={() => setRange(r.value)}
+                className={`rounded px-2 py-0.5 text-xs font-medium transition-colors ${
+                  range === r.value
+                    ? "bg-accent text-foreground"
+                    : "text-muted-foreground hover:bg-muted/60"
+                }`}
+              >
+                {r.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {[
+            { key: "fundingRate" as const, label: "Funding Rate" },
+            { key: "fundingApy" as const, label: "Funding APY%" },
+            { key: "earnApy" as const, label: "Earn APY%" },
+            { key: "combinedApy" as const, label: "Combined APY%" },
+            { key: "entrySpread" as const, label: "Entry Spread%" },
+            { key: "exitSpread" as const, label: "Exit Spread%" },
+          ].map((series) => (
             <button
-              key={r.value}
-              onClick={() => setRange(r.value)}
+              key={series.key}
+              onClick={() =>
+                setVisibleSeries((prev) => ({
+                  ...prev,
+                  [series.key]: !prev[series.key],
+                }))
+              }
               className={`rounded px-2 py-0.5 text-xs font-medium transition-colors ${
-                range === r.value
-                  ? "bg-accent text-foreground"
-                  : "text-muted-foreground hover:bg-muted/60"
+                visibleSeries[series.key]
+                  ? "bg-muted text-foreground"
+                  : "bg-muted/50 text-muted-foreground opacity-60"
               }`}
             >
-              {r.label}
+              {series.label}
             </button>
           ))}
         </div>

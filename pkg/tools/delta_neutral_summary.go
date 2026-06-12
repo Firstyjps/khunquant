@@ -152,7 +152,7 @@ func (t *GetDeltaNeutralSummaryTool) Execute(ctx context.Context, args map[strin
 	out += fmt.Sprintf("  Status:             %s\n", plan.Status)
 	out += fmt.Sprintf("  Enabled:            %v\n", plan.Enabled)
 	out += "\n"
-	out += fmt.Sprintf("Positions:\n")
+	out += "Positions:\n"
 	out += fmt.Sprintf("  Spot:               %s on %s\n", plan.SpotSymbol, plan.SpotProvider)
 	out += fmt.Sprintf("  Futures:            %s on %s (leverage %d)\n", plan.FuturesSymbol, plan.FuturesProvider, plan.FuturesLeverage)
 	out += fmt.Sprintf("  Capital:            %.2f USDT\n", plan.CapitalUSDT)
@@ -171,6 +171,15 @@ func (t *GetDeltaNeutralSummaryTool) Execute(ctx context.Context, args map[strin
 		out += fmt.Sprintf("  Breakeven (funding only):   %.2f days\n", costs.BreakevenFundingDays)
 		out += fmt.Sprintf("  Breakeven (funding + earn): %.2f days\n\n", costs.BreakevenCombinedDays)
 
+		// Windowed APY (matched funding + earn averages, persisted per monitor tick).
+		out += "Yield Windows (matched funding + earn averages):\n"
+		out += fmt.Sprintf("  Funding APY:  now %+.4f%% | 3M %+.4f%% | 6M %+.4f%% | 12M %+.4f%%\n",
+			snapshot.FundingAPYPct, snapshot.Funding90dAPYPct, snapshot.Funding180dAPYPct, snapshot.Funding365dAPYPct)
+		out += fmt.Sprintf("  Earn APY:     now %+.4f%% | 3M %+.4f%% | 6M %+.4f%% | 12M %+.4f%%\n",
+			snapshot.EarnAPYPct, snapshot.Earn90dAPYPct, snapshot.Earn180dAPYPct, snapshot.Earn365dAPYPct)
+		out += fmt.Sprintf("  Combined APY: now %+.4f%% | 3M %+.4f%% | 6M %+.4f%% | 12M %+.4f%%\n\n",
+			snapshot.CombinedAPYPct, snapshot.Combined90dAPYPct, snapshot.Combined180dAPYPct, snapshot.Combined365dAPYPct)
+
 		out += fmt.Sprintf("Latest Monitor (as of %s):\n", snapshot.CheckedAt.Format("2006-01-02 15:04:05 UTC"))
 		out += fmt.Sprintf("  Health:             %s (score: %d/100)\n", snapshot.HealthLabel, snapshot.HealthScore)
 		out += fmt.Sprintf("  Delta drift:        %.2f%% (threshold: %.2f%%)\n", snapshot.DeltaDriftPct, plan.RiskPolicy.MaxDeltaDriftPct)
@@ -183,7 +192,7 @@ func (t *GetDeltaNeutralSummaryTool) Execute(ctx context.Context, args map[strin
 		spotPnL := snapshot.SpotValueUSDT - plan.SpotNotionalUSDT
 		netPnL := snapshot.FuturesUnrealizedPnLUSDT + spotPnL
 		out += "\nP&L Breakdown:\n"
-		out += fmt.Sprintf("  Spot leg:\n")
+		out += "  Spot leg:\n"
 		out += fmt.Sprintf("    Entry notional:   %.4f USDT\n", plan.SpotNotionalUSDT)
 		out += fmt.Sprintf("    Current value:    %.4f USDT (price %.6f, qty %.4f)\n",
 			snapshot.SpotValueUSDT, snapshot.SpotPrice, snapshot.SpotQuantity)

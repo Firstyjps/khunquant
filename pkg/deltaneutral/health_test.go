@@ -447,6 +447,8 @@ func TestDetectBreaches(t *testing.T) {
 				tt.marginState,
 				tt.fundingInfo,
 				policy,
+				0,           // exitSpreadPct: disabled in these existing tests
+				ExitRules{}, // no exit spread target
 			)
 
 			if len(tt.expectedBreaches) == 0 && len(got) > 0 {
@@ -858,4 +860,139 @@ func floatAlmostEqual(a, b, tolerance float64) bool {
 		return a-b < tolerance
 	}
 	return b-a < tolerance
+}
+
+// TestExitSpreadTargetBreach verifies that exit_spread_target_met is raised
+// when exit spread >= target and is absent when disabled (target=0) or below target.
+func TestExitSpreadTargetBreach(t *testing.T) {
+	tests := []struct {
+		name             string
+		targetExitSpread float64
+		actualExitSpread float64
+		wantBreach       bool
+		wantRecommend    string // substring expected in RecommendedAction
+	}{
+		{
+			name:             "exit spread exceeds target",
+			targetExitSpread: 0.1,
+			actualExitSpread: 0.15,
+			wantBreach:       true,
+			wantRecommend:    "unwind",
+		},
+		{
+			name:             "exit spread equals target exactly",
+			targetExitSpread: 0.1,
+			actualExitSpread: 0.1,
+			wantBreach:       true,
+			wantRecommend:    "unwind",
+		},
+		{
+			name:             "exit spread below target",
+			targetExitSpread: 0.1,
+			actualExitSpread: 0.05,
+			wantBreach:       false,
+		},
+		{
+			name:             "target disabled (zero) — never breaches",
+			targetExitSpread: 0,
+			actualExitSpread: 99.9,
+			wantBreach:       false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			now := time.Now()
+			input := EvaluationInput{
+				Plan: Plan{
+					ID:              1,
+					Name:            "test",
+					Status:          PlanStatusActive,
+					SpotProvider:    "binance",
+					FuturesProvider: "binance",
+					RiskPolicy:      DefaultRiskPolicy(),
+					ExitRules: ExitRules{
+						TargetExitSpreadPct: tt.targetExitSpread,
+					},
+				},
+				SpotState: SpotState{
+					Available: true,
+					Price:     50000,
+					Quantity:  1,
+					ValueUSDT: 50000,
+				},
+				FuturesState: FuturesState{
+					Available:         true,
+					MarkPrice:         50000,
+					Contracts:         1,
+					NotionalUSDT:      50000,
+					UnrealizedPnLUSDT: 0,
+					LiquidationPrice:  30000,
+					MarginRatioPct:    80,
+				},
+				FundingInfo: FundingInfo{
+					Available:   true,
+					CurrentRate: 0.0001,
+				},
+				EntrySpreadPct: -0.1,
+				ExitSpreadPct:  tt.actualExitSpread,
+				Now:            now,
+			}
+
+			result := Evaluate(input)
+
+			// Verify breach code presence
+			hasCode := false
+			for _, code := range result.BreachCodes {
+				if code == "exit_spread_target_met" {
+					hasCode = true
+					break
+				}
+			}
+			if tt.wantBreach && !hasCode {
+				t.Errorf("expected breach 'exit_spread_target_met', got codes: %v", result.BreachCodes)
+			}
+			if !tt.wantBreach && hasCode {
+				t.Errorf("unexpected breach 'exit_spread_target_met' (target=%.4f, actual=%.4f)", tt.targetExitSpread, tt.actualExitSpread)
+			}
+
+			// Verify recommendation substring when breach expected
+			if tt.wantBreach && tt.wantRecommend != "" {
+				if !containsSubstring(result.RecommendedAction, tt.wantRecommend) {
+					t.Errorf("RecommendedAction = %q, want substring %q", result.RecommendedAction, tt.wantRecommend)
+				}
+			}
+
+			// Verify spread values propagated to snapshot
+			if result.Snapshot.ExitSpreadPct != tt.actualExitSpread {
+				t.Errorf("Snapshot.ExitSpreadPct = %.4f, want %.4f", result.Snapshot.ExitSpreadPct, tt.actualExitSpread)
+			}
+			if result.Snapshot.EntrySpreadPct != -0.1 {
+				t.Errorf("Snapshot.EntrySpreadPct = %.4f, want -0.1", result.Snapshot.EntrySpreadPct)
+			}
+		})
+	}
+}
+
+// TestExitSpreadNotCritical verifies that exit_spread_target_met is not a critical
+// breach code (it's a profit-taking signal, not a risk alert).
+func TestExitSpreadNotCritical(t *testing.T) {
+	if IsCriticalBreachCode("exit_spread_target_met") {
+		t.Error("exit_spread_target_met should not be a critical breach code")
+	}
+}
+
+// containsSubstring is a helper for substring checks in test assertions.
+func containsSubstring(s, substr string) bool {
+	if substr == "" {
+		return true
+	}
+	return len(s) >= len(substr) && func() bool {
+		for i := 0; i <= len(s)-len(substr); i++ {
+			if s[i:i+len(substr)] == substr {
+				return true
+			}
+		}
+		return false
+	}()
 }

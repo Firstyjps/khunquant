@@ -79,6 +79,15 @@ CREATE TABLE IF NOT EXISTS delta_neutral_monitor_snapshots (
     funding_apy_pct            REAL    NOT NULL DEFAULT 0,
     earn_apy_pct               REAL    NOT NULL DEFAULT 0,
     combined_apy_pct           REAL    NOT NULL DEFAULT 0,
+    funding_apy_90d_pct        REAL    NOT NULL DEFAULT 0,
+    funding_apy_180d_pct       REAL    NOT NULL DEFAULT 0,
+    funding_apy_365d_pct       REAL    NOT NULL DEFAULT 0,
+    earn_apy_90d_pct           REAL    NOT NULL DEFAULT 0,
+    earn_apy_180d_pct          REAL    NOT NULL DEFAULT 0,
+    earn_apy_365d_pct          REAL    NOT NULL DEFAULT 0,
+    combined_apy_90d_pct       REAL    NOT NULL DEFAULT 0,
+    combined_apy_180d_pct      REAL    NOT NULL DEFAULT 0,
+    combined_apy_365d_pct      REAL    NOT NULL DEFAULT 0,
     estimated_next_funding_usdt REAL   NOT NULL DEFAULT 0,
     funding_state              TEXT    NOT NULL DEFAULT '',
 
@@ -194,6 +203,19 @@ var migrations = []string{
 	`ALTER TABLE delta_neutral_monitor_snapshots ADD COLUMN funding_apy_pct   REAL NOT NULL DEFAULT 0;`,
 	`ALTER TABLE delta_neutral_monitor_snapshots ADD COLUMN earn_apy_pct      REAL NOT NULL DEFAULT 0;`,
 	`ALTER TABLE delta_neutral_monitor_snapshots ADD COLUMN combined_apy_pct  REAL NOT NULL DEFAULT 0;`,
+	// Add price-basis spread columns to snapshots (one per statement; idempotent via "duplicate column" guard).
+	`ALTER TABLE delta_neutral_monitor_snapshots ADD COLUMN entry_spread_pct REAL NOT NULL DEFAULT 0;`,
+	`ALTER TABLE delta_neutral_monitor_snapshots ADD COLUMN exit_spread_pct  REAL NOT NULL DEFAULT 0;`,
+	// Add trailing earn + matched-window combined APY columns to snapshots (3M/6M/12M).
+	`ALTER TABLE delta_neutral_monitor_snapshots ADD COLUMN funding_apy_90d_pct   REAL NOT NULL DEFAULT 0;`,
+	`ALTER TABLE delta_neutral_monitor_snapshots ADD COLUMN funding_apy_180d_pct  REAL NOT NULL DEFAULT 0;`,
+	`ALTER TABLE delta_neutral_monitor_snapshots ADD COLUMN funding_apy_365d_pct  REAL NOT NULL DEFAULT 0;`,
+	`ALTER TABLE delta_neutral_monitor_snapshots ADD COLUMN earn_apy_90d_pct      REAL NOT NULL DEFAULT 0;`,
+	`ALTER TABLE delta_neutral_monitor_snapshots ADD COLUMN earn_apy_180d_pct     REAL NOT NULL DEFAULT 0;`,
+	`ALTER TABLE delta_neutral_monitor_snapshots ADD COLUMN earn_apy_365d_pct     REAL NOT NULL DEFAULT 0;`,
+	`ALTER TABLE delta_neutral_monitor_snapshots ADD COLUMN combined_apy_90d_pct  REAL NOT NULL DEFAULT 0;`,
+	`ALTER TABLE delta_neutral_monitor_snapshots ADD COLUMN combined_apy_180d_pct REAL NOT NULL DEFAULT 0;`,
+	`ALTER TABLE delta_neutral_monitor_snapshots ADD COLUMN combined_apy_365d_pct REAL NOT NULL DEFAULT 0;`,
 }
 
 // Alert represents a delta-neutral alert in the database.
@@ -641,18 +663,26 @@ func (s *Store) SaveSnapshot(ctx context.Context, snapshot *MonitorSnapshot) (in
 		 (plan_id, checked_at, spot_price, spot_quantity, spot_value_usdt, futures_mark_price,
 		  futures_contracts, futures_notional_usdt, futures_unrealized_pnl_usdt,
 		  current_funding_rate, funding_apy_pct, earn_apy_pct, combined_apy_pct,
+		  funding_apy_90d_pct, funding_apy_180d_pct, funding_apy_365d_pct,
+		  earn_apy_90d_pct, earn_apy_180d_pct, earn_apy_365d_pct,
+		  combined_apy_90d_pct, combined_apy_180d_pct, combined_apy_365d_pct,
 		  estimated_next_funding_usdt, funding_state, delta_drift_pct,
+		  entry_spread_pct, exit_spread_pct,
 		  liquidation_price, liquidation_distance_pct, margin_ratio_pct, margin_state,
 		  health_score, health_label, cross_exchange, threshold_breached, breach_codes_json,
 		  data_status, error_msg, agent_invoked, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		snapshot.PlanID, snapshot.CheckedAt.Format(time.RFC3339),
 		snapshot.SpotPrice, snapshot.SpotQuantity, snapshot.SpotValueUSDT,
 		snapshot.FuturesMarkPrice, snapshot.FuturesContracts, snapshot.FuturesNotionalUSDT,
 		snapshot.FuturesUnrealizedPnLUSDT,
 		snapshot.CurrentFundingRate, snapshot.FundingAPYPct, snapshot.EarnAPYPct, snapshot.CombinedAPYPct,
+		snapshot.Funding90dAPYPct, snapshot.Funding180dAPYPct, snapshot.Funding365dAPYPct,
+		snapshot.Earn90dAPYPct, snapshot.Earn180dAPYPct, snapshot.Earn365dAPYPct,
+		snapshot.Combined90dAPYPct, snapshot.Combined180dAPYPct, snapshot.Combined365dAPYPct,
 		snapshot.EstimatedNextFundingUSDT, snapshot.FundingState,
-		snapshot.DeltaDriftPct, snapshot.LiquidationPrice, snapshot.LiquidationDistancePct,
+		snapshot.DeltaDriftPct, snapshot.EntrySpreadPct, snapshot.ExitSpreadPct,
+		snapshot.LiquidationPrice, snapshot.LiquidationDistancePct,
 		snapshot.MarginRatioPct, snapshot.MarginState,
 		snapshot.HealthScore, snapshot.HealthLabel, boolToInt(snapshot.CrossExchange),
 		boolToInt(snapshot.ThresholdBreached), breachCodesJSON,
@@ -683,7 +713,11 @@ func (s *Store) ListSnapshots(ctx context.Context, planID int64, limit, offset i
 		`SELECT id, plan_id, checked_at, spot_price, spot_quantity, spot_value_usdt,
 		        futures_mark_price, futures_contracts, futures_notional_usdt, futures_unrealized_pnl_usdt,
 		        current_funding_rate, funding_apy_pct, earn_apy_pct, combined_apy_pct,
+		        funding_apy_90d_pct, funding_apy_180d_pct, funding_apy_365d_pct,
+		  earn_apy_90d_pct, earn_apy_180d_pct, earn_apy_365d_pct,
+		        combined_apy_90d_pct, combined_apy_180d_pct, combined_apy_365d_pct,
 		        estimated_next_funding_usdt, funding_state, delta_drift_pct,
+		        entry_spread_pct, exit_spread_pct,
 		        liquidation_price, liquidation_distance_pct, margin_ratio_pct, margin_state,
 		        health_score, health_label, cross_exchange, threshold_breached, breach_codes_json,
 		        data_status, error_msg, agent_invoked, created_at
@@ -714,7 +748,11 @@ func (s *Store) LatestSnapshot(ctx context.Context, planID int64) (*MonitorSnaps
 		`SELECT id, plan_id, checked_at, spot_price, spot_quantity, spot_value_usdt,
 		        futures_mark_price, futures_contracts, futures_notional_usdt, futures_unrealized_pnl_usdt,
 		        current_funding_rate, funding_apy_pct, earn_apy_pct, combined_apy_pct,
+		        funding_apy_90d_pct, funding_apy_180d_pct, funding_apy_365d_pct,
+		  earn_apy_90d_pct, earn_apy_180d_pct, earn_apy_365d_pct,
+		        combined_apy_90d_pct, combined_apy_180d_pct, combined_apy_365d_pct,
 		        estimated_next_funding_usdt, funding_state, delta_drift_pct,
+		        entry_spread_pct, exit_spread_pct,
 		        liquidation_price, liquidation_distance_pct, margin_ratio_pct, margin_state,
 		        health_score, health_label, cross_exchange, threshold_breached, breach_codes_json,
 		        data_status, error_msg, agent_invoked, created_at
@@ -730,13 +768,15 @@ func (s *Store) LatestSnapshot(ctx context.Context, planID int64) (*MonitorSnaps
 }
 
 // SnapshotSeriesPoint is a lightweight row used for time-series charting.
-// It contains only the 4 yield metrics + timestamp to keep payloads small.
+// It contains yield metrics + spread values + timestamp to keep payloads small.
 type SnapshotSeriesPoint struct {
 	CheckedAt          time.Time `json:"t"`
 	CurrentFundingRate float64   `json:"funding_rate"`
 	FundingAPYPct      float64   `json:"funding_apy"`
 	EarnAPYPct         float64   `json:"earn_apy"`
 	CombinedAPYPct     float64   `json:"combined_apy"`
+	EntrySpreadPct     float64   `json:"entry_spread_pct"`
+	ExitSpreadPct      float64   `json:"exit_spread_pct"`
 }
 
 // ListSnapshotSeries returns time-ordered yield metrics for a plan, optionally
@@ -751,7 +791,8 @@ func (s *Store) ListSnapshotSeries(ctx context.Context, planID int64, since time
 	sinceStr := since.Format(time.RFC3339)
 	if since.IsZero() {
 		rows, err = s.db.QueryContext(ctx,
-			`SELECT checked_at, current_funding_rate, funding_apy_pct, earn_apy_pct, combined_apy_pct
+			`SELECT checked_at, current_funding_rate, funding_apy_pct, earn_apy_pct, combined_apy_pct,
+			        entry_spread_pct, exit_spread_pct
 			 FROM delta_neutral_monitor_snapshots
 			 WHERE plan_id = ?
 			 ORDER BY checked_at ASC`,
@@ -759,7 +800,8 @@ func (s *Store) ListSnapshotSeries(ctx context.Context, planID int64, since time
 		)
 	} else {
 		rows, err = s.db.QueryContext(ctx,
-			`SELECT checked_at, current_funding_rate, funding_apy_pct, earn_apy_pct, combined_apy_pct
+			`SELECT checked_at, current_funding_rate, funding_apy_pct, earn_apy_pct, combined_apy_pct,
+			        entry_spread_pct, exit_spread_pct
 			 FROM delta_neutral_monitor_snapshots
 			 WHERE plan_id = ? AND checked_at >= ?
 			 ORDER BY checked_at ASC`,
@@ -775,7 +817,7 @@ func (s *Store) ListSnapshotSeries(ctx context.Context, planID int64, since time
 	for rows.Next() {
 		var p SnapshotSeriesPoint
 		var checkedAt string
-		if err := rows.Scan(&checkedAt, &p.CurrentFundingRate, &p.FundingAPYPct, &p.EarnAPYPct, &p.CombinedAPYPct); err != nil {
+		if err := rows.Scan(&checkedAt, &p.CurrentFundingRate, &p.FundingAPYPct, &p.EarnAPYPct, &p.CombinedAPYPct, &p.EntrySpreadPct, &p.ExitSpreadPct); err != nil {
 			return nil, err
 		}
 		p.CheckedAt, _ = time.Parse(time.RFC3339, checkedAt)
@@ -809,6 +851,7 @@ func downsampleSeries(pts []SnapshotSeriesPoint, n int) []SnapshotSeriesPoint {
 
 	type bucket struct {
 		sumFR, sumFAPY, sumEAPY, sumCAPY float64
+		sumEntrySpread, sumExitSpread    float64
 		count                            int
 	}
 	buckets := make([]bucket, n)
@@ -822,6 +865,8 @@ func downsampleSeries(pts []SnapshotSeriesPoint, n int) []SnapshotSeriesPoint {
 		buckets[idx].sumFAPY += p.FundingAPYPct
 		buckets[idx].sumEAPY += p.EarnAPYPct
 		buckets[idx].sumCAPY += p.CombinedAPYPct
+		buckets[idx].sumEntrySpread += p.EntrySpreadPct
+		buckets[idx].sumExitSpread += p.ExitSpreadPct
 		buckets[idx].count++
 	}
 
@@ -838,6 +883,8 @@ func downsampleSeries(pts []SnapshotSeriesPoint, n int) []SnapshotSeriesPoint {
 			FundingAPYPct:      b.sumFAPY / float64(b.count),
 			EarnAPYPct:         b.sumEAPY / float64(b.count),
 			CombinedAPYPct:     b.sumCAPY / float64(b.count),
+			EntrySpreadPct:     b.sumEntrySpread / float64(b.count),
+			ExitSpreadPct:      b.sumExitSpread / float64(b.count),
 		})
 	}
 	return out
@@ -1300,8 +1347,12 @@ func scanSnapshot(scan func(dest ...any) error) (*MonitorSnapshot, error) {
 		&s.SpotPrice, &s.SpotQuantity, &s.SpotValueUSDT,
 		&s.FuturesMarkPrice, &s.FuturesContracts, &s.FuturesNotionalUSDT, &s.FuturesUnrealizedPnLUSDT,
 		&s.CurrentFundingRate, &s.FundingAPYPct, &s.EarnAPYPct, &s.CombinedAPYPct,
+		&s.Funding90dAPYPct, &s.Funding180dAPYPct, &s.Funding365dAPYPct,
+		&s.Earn90dAPYPct, &s.Earn180dAPYPct, &s.Earn365dAPYPct,
+		&s.Combined90dAPYPct, &s.Combined180dAPYPct, &s.Combined365dAPYPct,
 		&s.EstimatedNextFundingUSDT, &s.FundingState,
-		&s.DeltaDriftPct, &s.LiquidationPrice, &s.LiquidationDistancePct,
+		&s.DeltaDriftPct, &s.EntrySpreadPct, &s.ExitSpreadPct,
+		&s.LiquidationPrice, &s.LiquidationDistancePct,
 		&s.MarginRatioPct, &s.MarginState,
 		&s.HealthScore, &s.HealthLabel, &crossExchangeInt,
 		&thresholdBreachedInt, &breachCodesJSON,

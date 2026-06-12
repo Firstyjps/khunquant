@@ -1,4 +1,9 @@
 import type { DeltaNeutralMonitorSnapshot, DeltaNeutralPlanListItem } from "@/api/agent-delta-neutral"
+import { updateDeltaNeutralSpreadTargets } from "@/api/agent-delta-neutral"
+import { useQueryClient } from "@tanstack/react-query"
+import { IconPencil } from "@tabler/icons-react"
+import { useState } from "react"
+import { toast } from "sonner"
 
 import { InfoHint, LabelWithHint } from "./info-hint"
 
@@ -279,6 +284,51 @@ export function DeltaNeutralYieldCard({ plan, snap }: YieldCardProps) {
             </div>
 
             {/* Divider */}
+            <div className="border-border/40 mb-3 border-t" />
+
+            {/* Funding APY windows */}
+            <div className="mb-1.5 flex items-center gap-1">
+              <span className="text-muted-foreground text-xs font-medium uppercase tracking-wide">
+                Funding APY
+              </span>
+              <InfoHint text="Annualized perpetual funding APY for the short leg. 'Now' is the current rate; 3M/6M/12M are trailing averages from funding-rate history. Note: OKX retains only ~3 months of funding history, so on OKX the 6M/12M values equal 3M; Binance retains over a year and shows distinct values." />
+            </div>
+            <div className="mb-3 grid grid-cols-4 gap-2 text-center">
+              <ApyPill label="Now" value={snap.funding_apy_pct} color="text-sky-500 dark:text-sky-400" />
+              <ApyPill label="3M" value={snap.funding_apy_90d_pct} color="text-sky-500 dark:text-sky-400" />
+              <ApyPill label="6M" value={snap.funding_apy_180d_pct} color="text-sky-500 dark:text-sky-400" />
+              <ApyPill label="12M" value={snap.funding_apy_365d_pct} color="text-sky-500 dark:text-sky-400" />
+            </div>
+
+            {/* Earn APY windows (Binance/OKX-style) */}
+            <div className="mb-1.5 flex items-center gap-1">
+              <span className="text-muted-foreground text-xs font-medium uppercase tracking-wide">
+                Earn APY
+              </span>
+              <InfoHint text="Flexible-savings (earn) APY for the spot leg. 'Now' is the current best rate; 3M/6M/12M are trailing averages from the exchange's earn rate history (hourly on OKX, daily on Binance)." />
+            </div>
+            <div className="mb-3 grid grid-cols-4 gap-2 text-center">
+              <ApyPill label="Now" value={snap.earn_apy_pct} color="text-amber-500 dark:text-amber-400" />
+              <ApyPill label="3M" value={snap.earn_apy_90d_pct} color="text-amber-500 dark:text-amber-400" />
+              <ApyPill label="6M" value={snap.earn_apy_180d_pct} color="text-amber-500 dark:text-amber-400" />
+              <ApyPill label="12M" value={snap.earn_apy_365d_pct} color="text-amber-500 dark:text-amber-400" />
+            </div>
+
+            {/* Combined APY windows — each pairs the matched funding + earn average */}
+            <div className="mb-1.5 flex items-center gap-1">
+              <span className="text-muted-foreground text-xs font-medium uppercase tracking-wide">
+                Combined APY
+              </span>
+              <InfoHint text="Funding APY + Earn APY for each window. 3M/6M/12M pair the trailing funding average with the matching trailing earn average, for a more accurate carry estimate than mixing a windowed funding rate with a point-in-time earn rate." />
+            </div>
+            <div className="mb-3 grid grid-cols-4 gap-2 text-center">
+              <ApyPill label="Now" value={snap.combined_apy_pct} color="text-green-500 dark:text-green-400" />
+              <ApyPill label="3M" value={snap.combined_apy_90d_pct} color="text-green-500 dark:text-green-400" />
+              <ApyPill label="6M" value={snap.combined_apy_180d_pct} color="text-green-500 dark:text-green-400" />
+              <ApyPill label="12M" value={snap.combined_apy_365d_pct} color="text-green-500 dark:text-green-400" />
+            </div>
+
+            {/* Divider */}
             <div className="border-border/40 mb-2.5 border-t" />
 
             {/* Entry/exit cost */}
@@ -294,6 +344,190 @@ export function DeltaNeutralYieldCard({ plan, snap }: YieldCardProps) {
             </div>
           </>
         )}
+      </div>
+    </div>
+  )
+}
+
+// ─── Spread Card ──────────────────────────────────────────────────────────────
+
+interface SpreadCardProps {
+  plan: DeltaNeutralPlanListItem
+  snapshot?: DeltaNeutralMonitorSnapshot
+}
+
+export function DeltaNeutralSpreadCard({ plan, snapshot }: SpreadCardProps) {
+  const queryClient = useQueryClient()
+  const [editingField, setEditingField] = useState<"entry" | "exit" | null>(null)
+  const [editValue, setEditValue] = useState("")
+
+  const entrySpread = snapshot?.entry_spread_pct ?? null
+  const exitSpread = snapshot?.exit_spread_pct ?? null
+  const entryTarget = plan.min_entry_spread_pct !== 0 ? plan.min_entry_spread_pct : null
+  const exitTarget = plan.target_exit_spread_pct !== 0 ? plan.target_exit_spread_pct : null
+
+  const startEdit = (field: "entry" | "exit") => {
+    if (field === "entry") {
+      setEditValue(entryTarget?.toString() ?? "")
+    } else {
+      setEditValue(exitTarget?.toString() ?? "")
+    }
+    setEditingField(field)
+  }
+
+  const saveEdit = async () => {
+    if (!editingField) return
+    try {
+      const value = parseFloat(editValue)
+      if (isNaN(value)) {
+        toast.error("Invalid number")
+        return
+      }
+
+      if (editingField === "entry") {
+        await updateDeltaNeutralSpreadTargets(plan.id, { min_entry_spread_pct: value })
+        toast.success("Entry spread target updated")
+      } else {
+        await updateDeltaNeutralSpreadTargets(plan.id, { target_exit_spread_pct: value })
+        toast.success("Exit spread target updated")
+      }
+
+      void queryClient.invalidateQueries({ queryKey: ["dn-plans"] })
+      void queryClient.invalidateQueries({ queryKey: ["dn-snapshots"] })
+      setEditingField(null)
+      setEditValue("")
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Failed to update spread target"
+      toast.error(msg)
+    }
+  }
+
+  const cancelEdit = () => {
+    setEditingField(null)
+    setEditValue("")
+  }
+
+  return (
+    <div className="overflow-hidden rounded-lg border">
+      {/* Header */}
+      <div className="border-border/50 flex items-center gap-1.5 border-b px-3 py-2">
+        <span className="text-foreground/80 text-xs font-medium uppercase tracking-wide">
+          Spread
+        </span>
+        <InfoHint text="Entry and exit spreads: the current difference between spot price and futures mark price. Targets control when to rebalance." />
+      </div>
+
+      <div className="p-3">
+        {/* Live spreads — top row */}
+        <div className="mb-3 grid grid-cols-2 gap-3">
+          <div className="rounded-md bg-muted/30 p-3 text-center">
+            <div className="text-muted-foreground mb-1 text-xs font-medium">Entry Spread</div>
+            {entrySpread !== null ? (
+              <span className={`font-mono text-lg font-bold ${signedColor(entrySpread)}`}>
+                {signed(entrySpread, 4)}%
+              </span>
+            ) : (
+              <span className="text-muted-foreground font-mono text-lg">N/A</span>
+            )}
+          </div>
+          <div className="rounded-md bg-muted/30 p-3 text-center">
+            <div className="text-muted-foreground mb-1 text-xs font-medium">Exit Spread</div>
+            {exitSpread !== null ? (
+              <span className={`font-mono text-lg font-bold ${signedColor(exitSpread)}`}>
+                {signed(exitSpread, 4)}%
+              </span>
+            ) : (
+              <span className="text-muted-foreground font-mono text-lg">N/A</span>
+            )}
+          </div>
+        </div>
+
+        <div className="border-border/40 mb-3 border-t" />
+
+        {/* Targets — editable */}
+        <div className="space-y-2">
+          {/* Entry spread target */}
+          <div className="flex items-center justify-between rounded-md bg-muted/20 p-2.5">
+            <div>
+              <div className="text-muted-foreground text-xs font-medium">Entry Spread Gate</div>
+              {editingField === "entry" ? (
+                <div className="mt-1 flex gap-1">
+                  <input
+                    type="number"
+                    step="0.0001"
+                    value={editValue}
+                    onChange={(e) => setEditValue(e.target.value)}
+                    className="w-24 rounded border border-border bg-background px-2 py-1 text-xs font-mono"
+                  />
+                  <button
+                    onClick={saveEdit}
+                    className="rounded bg-green-600 px-2 py-1 text-xs font-medium text-white hover:bg-green-700"
+                  >
+                    Save
+                  </button>
+                  <button
+                    onClick={cancelEdit}
+                    className="rounded bg-muted px-2 py-1 text-xs font-medium hover:bg-muted/80"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <div className="text-muted-foreground mt-1 flex items-center gap-2 font-mono text-sm">
+                  <span>{entryTarget !== null ? `${entryTarget.toFixed(4)}%` : "disabled"}</span>
+                  <button
+                    onClick={() => startEdit("entry")}
+                    className="text-muted-foreground hover:text-foreground"
+                    title="Edit entry spread target"
+                  >
+                    <IconPencil className="size-3" />
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Exit spread target */}
+          <div className="flex items-center justify-between rounded-md bg-muted/20 p-2.5">
+            <div>
+              <div className="text-muted-foreground text-xs font-medium">Exit Spread Target</div>
+              {editingField === "exit" ? (
+                <div className="mt-1 flex gap-1">
+                  <input
+                    type="number"
+                    step="0.0001"
+                    value={editValue}
+                    onChange={(e) => setEditValue(e.target.value)}
+                    className="w-24 rounded border border-border bg-background px-2 py-1 text-xs font-mono"
+                  />
+                  <button
+                    onClick={saveEdit}
+                    className="rounded bg-green-600 px-2 py-1 text-xs font-medium text-white hover:bg-green-700"
+                  >
+                    Save
+                  </button>
+                  <button
+                    onClick={cancelEdit}
+                    className="rounded bg-muted px-2 py-1 text-xs font-medium hover:bg-muted/80"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <div className="text-muted-foreground mt-1 flex items-center gap-2 font-mono text-sm">
+                  <span>{exitTarget !== null ? `${exitTarget.toFixed(4)}%` : "disabled"}</span>
+                  <button
+                    onClick={() => startEdit("exit")}
+                    className="text-muted-foreground hover:text-foreground"
+                    title="Edit exit spread target"
+                  >
+                    <IconPencil className="size-3" />
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   )
@@ -356,6 +590,20 @@ function DailyPill({
         +{fmt(value, 4)}
       </div>
       <div className="text-muted-foreground mt-0.5 text-xs opacity-70">{sub}</div>
+    </div>
+  )
+}
+
+// ApyPill renders a compact APY window value (e.g. Now / 7d / 14d / 30d).
+// Shows an em-dash when the value is zero/unavailable.
+function ApyPill({ label, value, color }: { label: string; value: number; color: string }) {
+  const v = safeNum(value)
+  return (
+    <div className="rounded-md bg-muted/30 px-1.5 py-1.5">
+      <div className="text-muted-foreground mb-0.5 text-xs">{label}</div>
+      <div className={`font-mono text-xs font-semibold ${v !== 0 ? color : "text-muted-foreground"}`}>
+        {v !== 0 ? `${v > 0 ? "+" : ""}${fmt(v, 2)}%` : "—"}
+      </div>
     </div>
   )
 }
