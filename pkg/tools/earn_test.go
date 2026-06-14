@@ -73,7 +73,7 @@ func (m *mockEarnProvider) FetchFlexibleEarnProducts(ctx context.Context, asset 
 	if asset != "" {
 		// Filter by asset
 		for _, p := range mockProducts {
-			if strings.ToUpper(p.Asset) == strings.ToUpper(asset) {
+			if strings.EqualFold(p.Asset, asset) {
 				return []broker.EarnProduct{p}, nil
 			}
 		}

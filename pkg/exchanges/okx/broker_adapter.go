@@ -242,12 +242,24 @@ func (a *OKXBrokerAdapter) SetFuturesLeverage(_ context.Context, symbol string, 
 	if positionSide != "" {
 		params["posSide"] = strings.ToLower(positionSide)
 	}
+	logger.DebugCF("okx-leverage", "SetFuturesLeverage request", map[string]any{
+		"symbol": symbol, "leverage": leverage, "marginMode": marginMode, "positionSide": positionSide,
+	})
 	err = catchPanic(func() error {
 		out, err = a.client.SetLeverage(leverage, ccxt.WithSetLeverageSymbol(symbol), ccxt.WithSetLeverageParams(params))
 		return err
 	})
 	if err != nil {
+		logger.WarnCF("okx-leverage", "SetFuturesLeverage failed", map[string]any{
+			"symbol": symbol, "leverage": leverage, "marginMode": marginMode, "error": err.Error(),
+		})
 		return nil, fmt.Errorf("okx futures: set leverage: %w", err)
+	}
+	// Log the response to verify OKX applied the requested mode and leverage.
+	if len(out) > 0 {
+		logger.InfoCF("okx-leverage", "SetFuturesLeverage response", map[string]any{
+			"symbol": symbol, "response": out,
+		})
 	}
 	return out, nil
 }
@@ -346,18 +358,53 @@ func (a *OKXBrokerAdapter) FetchFuturesFundingHistory(_ context.Context, symbol 
 	return
 }
 
+// FetchPublicFundingRateHistory returns funding-rate history, paging backward when
+// limit>100 (OKX serves max 100/request). ccxt's built-in `paginate` is not wired
+// for this method in ccxt-go (panics "method not found"), so we page manually via
+// the OKX `after` cursor (records older than ts), which OKX merges from params.
 func (a *OKXBrokerAdapter) FetchPublicFundingRateHistory(_ context.Context, symbol string, since *int64, limit int) (history []ccxt.FundingRateHistory, err error) {
-	opts := []ccxt.FetchFundingRateHistoryOptions{}
-	if symbol != "" {
-		opts = append(opts, ccxt.WithFetchFundingRateHistorySymbol(symbol))
+	if limit <= 0 {
+		limit = 100
 	}
-	if since != nil {
-		opts = append(opts, ccxt.WithFetchFundingRateHistorySince(*since))
-	}
-	if limit > 0 {
-		opts = append(opts, ccxt.WithFetchFundingRateHistoryLimit(int64(limit)))
-	}
-	err = catchPanic(func() error { history, err = a.client.FetchFundingRateHistory(opts...); return err })
+	const perCall = 100
+	err = catchPanic(func() error {
+		var cursor int64 // OKX `after` cursor (ms); 0 => latest page
+		for len(history) < limit {
+			opts := []ccxt.FetchFundingRateHistoryOptions{}
+			if symbol != "" {
+				opts = append(opts, ccxt.WithFetchFundingRateHistorySymbol(symbol))
+			}
+			opts = append(opts, ccxt.WithFetchFundingRateHistoryLimit(perCall))
+			switch {
+			case cursor > 0:
+				opts = append(opts, ccxt.WithFetchFundingRateHistoryParams(map[string]any{"after": cursor}))
+			case since != nil:
+				opts = append(opts, ccxt.WithFetchFundingRateHistorySince(*since))
+			}
+			page, e := a.client.FetchFundingRateHistory(opts...)
+			if e != nil {
+				return e
+			}
+			if len(page) == 0 {
+				break
+			}
+			history = append(history, page...)
+			if len(page) < perCall {
+				break // reached the end of available history
+			}
+			oldest := int64(1) << 62
+			for _, r := range page {
+				if r.Timestamp != nil && *r.Timestamp < oldest {
+					oldest = *r.Timestamp
+				}
+			}
+			if oldest == int64(1)<<62 || oldest == cursor {
+				break
+			}
+			cursor = oldest
+		}
+		return nil
+	})
 	return
 }
 

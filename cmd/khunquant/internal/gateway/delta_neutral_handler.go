@@ -55,11 +55,14 @@ func handleDeltaNeutralMonitorJob(
 		return "plan disabled", nil
 	}
 
-	// Skip closed/archived/failed/draft plans.
+	// Skip plans that have no open position yet or are permanently closed.
+	// 'ready' plans have been prepared but not opened — no legs exist on the exchange,
+	// so a full monitor run would produce 100% delta drift and bogus alerts.
 	if plan.Status == deltaneutral.PlanStatusClosed ||
 		plan.Status == deltaneutral.PlanStatusArchived ||
 		plan.Status == deltaneutral.PlanStatusFailed ||
-		plan.Status == deltaneutral.PlanStatusDraft {
+		plan.Status == deltaneutral.PlanStatusDraft ||
+		plan.Status == deltaneutral.PlanStatusReady {
 		logger.DebugCF("dn-monitor", "Plan not monitorable (status: "+plan.Status+"), skipping", map[string]any{"plan_id": planID})
 		return "plan status not monitorable", nil
 	}
@@ -68,7 +71,8 @@ func handleDeltaNeutralMonitorJob(
 
 	// Fetch live state for futures leg.
 	futuresState := deltaneutral.FuturesState{}
-	var futureFundingRate *ccxt.FundingRate // Store funding rate if available.
+	var futureFundingRate *ccxt.FundingRate      // Store funding rate if available.
+	var fundingHistory []ccxt.FundingRateHistory // Trailing funding history for windowed averages.
 	futureFetcher, err := broker.CreateProviderForAccount(plan.FuturesProvider, plan.FuturesAccount, cfg)
 	if err != nil {
 		logger.WarnCF("dn-monitor", "Failed to create futures provider", map[string]any{
@@ -147,8 +151,28 @@ func handleDeltaNeutralMonitorJob(
 			} else {
 				futureFundingRate = &fr
 			}
+
+			// Fetch trailing funding history (≥1y) for windowed combined-APY averages.
+			// limit>100 enables ccxt pagination; ~1100 records cover 365d at 8h cadence
+			// (3/day → ~366d). Non-fatal: leaves fundingHistory nil when unavailable.
+			if hist, histErr := futuresProv.FetchPublicFundingRateHistory(ctx, plan.FuturesSymbol, nil, 1100); histErr == nil {
+				fundingHistory = hist
+			} else {
+				logger.WarnCF("dn-monitor", "Failed to fetch funding history (windows)", map[string]any{
+					"plan_id": planID, "error": histErr.Error(),
+				})
+			}
 		}
 	}
+
+	// earnAPYPct holds the best flexible-earn APY (%) for the base asset.
+	// Set inside the earn-provider block below; 0 when unavailable.
+	earnAPYPct := 0.0
+	// Trailing earn (flexible-savings) window averages (%) and their point counts;
+	// captured inside the earn-provider block below. 0 when unavailable.
+	var earn90dPct, earn180dPct, earn365dPct float64
+	var earn90dN, earn180dN, earn365dN int
+	var bestEarnProductID, bestEarnProductType string
 
 	// Fetch live state for spot leg.
 	spotState := deltaneutral.SpotState{}
@@ -219,6 +243,42 @@ func handleDeltaNeutralMonitorJob(
 							"plan_id": planID, "error": epErr.Error(),
 						})
 					}
+
+					// Fetch earn products to capture the best APY for the base asset.
+					// Non-fatal: earnAPYPct stays 0 when unavailable.
+					baseCurUpper := strings.ToUpper(baseCur)
+					if products, prodErr := ep.FetchFlexibleEarnProducts(ctx, baseCurUpper); prodErr == nil {
+						for _, prod := range products {
+							if strings.ToUpper(prod.Asset) == baseCurUpper {
+								apyPct := prod.APY * 100
+								if apyPct > earnAPYPct {
+									earnAPYPct = apyPct
+									bestEarnProductID = prod.ProductID
+									bestEarnProductType = prod.Type
+								}
+							}
+						}
+					} else {
+						logger.WarnCF("dn-monitor", "Failed to fetch earn products (APY)", map[string]any{
+							"plan_id": planID, "error": prodErr.Error(),
+						})
+					}
+
+					// Trailing earn-rate averages (90d/180d/365d). staking-defi has a flat
+					// APY with no rate-history endpoint, so skip it. since=now-364d with a
+					// generous limit triggers adapter pagination + caching. Non-fatal.
+					if earnAPYPct > 0 && bestEarnProductType != "staking-defi" {
+						earnSince := now.Add(-364 * 24 * time.Hour).UnixMilli()
+						if points, rhErr := ep.FetchFlexibleEarnRateHistory(ctx, bestEarnProductID, baseCurUpper, &earnSince, 9000); rhErr == nil {
+							earn90dPct, earn90dN = deltaneutral.EarnWindowMeanPct(points, 90*24*time.Hour, now)
+							earn180dPct, earn180dN = deltaneutral.EarnWindowMeanPct(points, 180*24*time.Hour, now)
+							earn365dPct, earn365dN = deltaneutral.EarnWindowMeanPct(points, 365*24*time.Hour, now)
+						} else {
+							logger.WarnCF("dn-monitor", "Failed to fetch earn rate history (windows)", map[string]any{
+								"plan_id": planID, "error": rhErr.Error(),
+							})
+						}
+					}
 				}
 
 				// Fall back to plan notional in two cases:
@@ -262,17 +322,66 @@ func handleDeltaNeutralMonitorJob(
 		// For now, keep RecentRates empty; in production, you'd fetch history.
 	}
 
+	// Compute price-basis spreads (safe when either price is zero — helpers return 0).
+	entrySpreadPct := deltaneutral.EntrySpreadPct(futuresState.MarkPrice, spotState.Price)
+	exitSpreadPct := deltaneutral.ExitSpreadPct(spotState.Price, futuresState.MarkPrice)
+
 	// Build evaluation input.
 	input := deltaneutral.EvaluationInput{
-		Plan:         *plan,
-		SpotState:    spotState,
-		FuturesState: futuresState,
-		FundingInfo:  fundingInfo,
-		Now:          now,
+		Plan:           *plan,
+		SpotState:      spotState,
+		FuturesState:   futuresState,
+		FundingInfo:    fundingInfo,
+		EntrySpreadPct: entrySpreadPct,
+		ExitSpreadPct:  exitSpreadPct,
+		Now:            now,
 	}
 
 	// Run deterministic health evaluation.
 	eval := deltaneutral.Evaluate(input)
+
+	// Compute and attach yield metrics.
+	var fundingInterval *string
+	if futureFundingRate != nil {
+		fundingInterval = futureFundingRate.Interval
+		if futureFundingRate.FundingRate != nil {
+			eval.Snapshot.FundingAPYPct = deltaneutral.AnnualizeFundingRatePct(*futureFundingRate.FundingRate, fundingInterval)
+		}
+	}
+	eval.Snapshot.EarnAPYPct = earnAPYPct
+	eval.Snapshot.CombinedAPYPct = eval.Snapshot.FundingAPYPct + earnAPYPct
+
+	// Trailing earn windows (3M/6M/12M): fall back to the current earn rate when a
+	// window has no rate-history points so the matched combined math is always valid.
+	eval.Snapshot.Earn90dAPYPct = earnAPYPct
+	eval.Snapshot.Earn180dAPYPct = earnAPYPct
+	eval.Snapshot.Earn365dAPYPct = earnAPYPct
+	if earn90dN > 0 {
+		eval.Snapshot.Earn90dAPYPct = earn90dPct
+	}
+	if earn180dN > 0 {
+		eval.Snapshot.Earn180dAPYPct = earn180dPct
+	}
+	if earn365dN > 0 {
+		eval.Snapshot.Earn365dAPYPct = earn365dPct
+	}
+
+	// Matched-window combined APY = funding window avg (annualised) + earn window avg.
+	// Each funding window falls back to the current funding APY when no history exists.
+	fundingWindowAPY := func(window time.Duration) float64 {
+		if mean, n := deltaneutral.FundingWindowMeanRate(fundingHistory, window, now); n > 0 {
+			return deltaneutral.AnnualizeFundingRatePct(mean, fundingInterval)
+		}
+		return eval.Snapshot.FundingAPYPct
+	}
+	// Persist the funding windows too (OKX funding history caps at ~3 months, so its
+	// 180d/365d collapse to the 90d value; Binance retains >1y and stays distinct).
+	eval.Snapshot.Funding90dAPYPct = fundingWindowAPY(90 * 24 * time.Hour)
+	eval.Snapshot.Funding180dAPYPct = fundingWindowAPY(180 * 24 * time.Hour)
+	eval.Snapshot.Funding365dAPYPct = fundingWindowAPY(365 * 24 * time.Hour)
+	eval.Snapshot.Combined90dAPYPct = eval.Snapshot.Funding90dAPYPct + eval.Snapshot.Earn90dAPYPct
+	eval.Snapshot.Combined180dAPYPct = eval.Snapshot.Funding180dAPYPct + eval.Snapshot.Earn180dAPYPct
+	eval.Snapshot.Combined365dAPYPct = eval.Snapshot.Funding365dAPYPct + eval.Snapshot.Earn365dAPYPct
 
 	// Always save snapshot.
 	eval.Snapshot.PlanID = planID
@@ -420,9 +529,21 @@ func parseSilenceDuration(s string) time.Duration {
 	}
 }
 
-// refreshPlanFees fetches accumulated fees for the plan's futures leg and saves a fee snapshot.
-// Skips if the last fetch was within 30 minutes.
+// refreshPlanFees saves a fee snapshot for the plan. Skips if the last fetch was
+// within 30 minutes or if the plan has not yet been executed (OpenedAt == nil).
+//
+// Trading fee source: our own execution leg records (fee_usdt column), summed per plan.
+// This is immune to OKX's two failure modes:
+//   - positions-history fee = full lifetime fee of that position, not window-scoped
+//   - cross-margin positions accumulate fee across add/reduce cycles from before plan.OpenedAt
+//
+// Funding fee source: OKX positions API — funding fees are not captured in order
+// responses so the exchange API is the only source.
 func refreshPlanFees(ctx context.Context, plan *deltaneutral.Plan, store *deltaneutral.Store, cfg *config.Config) {
+	if plan.OpenedAt == nil {
+		return
+	}
+
 	const staleness = 30 * time.Minute
 	if last, err := store.GetLatestPlanFeeSnapshot(ctx, plan.ID); err == nil && last != nil {
 		if time.Since(last.FetchedAt) < staleness {
@@ -430,35 +551,39 @@ func refreshPlanFees(ctx context.Context, plan *deltaneutral.Plan, store *deltan
 		}
 	}
 
-	fetcher, err := fees.NewFeesFetcher(plan.FuturesProvider, plan.FuturesAccount, cfg)
+	// Trading fee: sum fee_usdt from all filled execution legs for this plan.
+	// Negative values are costs (fees paid); positive are rebates.
+	tradingFee, err := store.SumPlanExecutionFees(ctx, plan.ID)
 	if err != nil {
-		logger.DebugCF("dn-fees", "provider not supported for fee fetching", map[string]any{"provider": plan.FuturesProvider})
+		logger.WarnCF("dn-fees", "sum execution fees failed", map[string]any{"plan_id": plan.ID, "error": err.Error()})
 		return
 	}
 
-	since := plan.CreatedAt
-	if plan.OpenedAt != nil {
-		since = *plan.OpenedAt
-	}
-
-	pf, err := fetcher.FetchFuturesPositionFees(ctx, fees.FetchFeesRequest{
-		FuturesSymbol: plan.FuturesSymbol,
-		Since:         since,
-		Until:         time.Now().UTC(),
-	})
-	if err != nil {
-		logger.WarnCF("dn-fees", "fee fetch failed", map[string]any{"plan_id": plan.ID, "error": err.Error()})
-		return
+	// Funding fee: fetch from exchange — the only reliable source.
+	// Non-fatal: snapshot is saved with fundingFee=0 if the provider is unsupported.
+	var fundingFee float64
+	fetcher, fetcherErr := fees.NewFeesFetcher(plan.FuturesProvider, plan.FuturesAccount, cfg)
+	if fetcherErr == nil {
+		if pf, pfErr := fetcher.FetchFuturesPositionFees(ctx, fees.FetchFeesRequest{
+			FuturesSymbol: plan.FuturesSymbol,
+			Since:         *plan.OpenedAt,
+			Until:         time.Now().UTC(),
+		}); pfErr == nil {
+			fundingFee = pf.FundingFeeUSDT
+		} else {
+			logger.WarnCF("dn-fees", "funding fee fetch failed", map[string]any{"plan_id": plan.ID, "error": pfErr.Error()})
+		}
 	}
 
 	now := time.Now().UTC()
+	until := now
 	if _, err := store.SavePlanFeeSnapshot(ctx, &deltaneutral.PlanFeeSnapshot{
 		PlanID:         plan.ID,
-		TradingFeeUSDT: pf.TradingFeeUSDT,
-		FundingFeeUSDT: pf.FundingFeeUSDT,
-		PeriodStart:    &pf.PeriodStart,
-		PeriodEnd:      &pf.PeriodEnd,
-		FetchedAt:      pf.FetchedAt,
+		TradingFeeUSDT: tradingFee,
+		FundingFeeUSDT: fundingFee,
+		PeriodStart:    plan.OpenedAt,
+		PeriodEnd:      &until,
+		FetchedAt:      now,
 		CreatedAt:      now,
 	}); err != nil {
 		logger.WarnCF("dn-fees", "save fee snapshot failed", map[string]any{"plan_id": plan.ID, "error": err.Error()})

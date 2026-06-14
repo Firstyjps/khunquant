@@ -309,7 +309,7 @@ Each opportunity is labeled with its direction: **"short perp"** (positive fundi
 | `include_stability` | boolean | | true | Fetch 7d/14d funding stats for top K (Stage 2) |
 | `include_earn` | boolean | | true | Fetch flexible spot-earn APY and show Earn%/Combined% columns (Stage 1.5). Earn data is account-scoped on Binance and public on OKX; rows without earn show '-'. |
 | `top_k_stability` | integer | | 15 | Stage 2: fetch funding history for top K ranked assets |
-| `sort_by` | string | | "funding_rate" | Field to sort by: `funding_rate`, `apr`, `7d_avg`, `14d_avg`, or `combined_apy`. Sorting by `7d_avg`/`14d_avg` requires computing stability for all candidates (more API calls). |
+| `sort_by` | string | | "funding_rate" | Field to sort by: `funding_rate`, `apr`, `7d_avg`, `14d_avg`, `combined_apy`, or `combined_apy_30d`. Sorting by `7d_avg`/`14d_avg` requires computing stability for all candidates (more API calls). |
 | `sort_order` | string | | "desc" | Sort direction: `asc` (most-negative first) or `desc` (most-positive first) |
 | `min_abs_funding_apr` | number | | 0 | Filter: exclude \|APR\| below this % (optional) |
 | `cmc_base_url` | string | | CoinMarketCap API | Override CMC endpoint (testing/custom) |
@@ -374,6 +374,47 @@ A high funding APR alone does not guarantee a good trade. Before creating a plan
 4. **Estimate total costs**: Use the per-symbol workflow (Steps 1–5 in Opportunity Scanning) to compute round-trip costs, net carry, and breakeven days.
 5. **Select and confirm**: Only then create a plan via `create_delta_neutral_plan` with your chosen spot and futures portfolios.
 
+## Projected Yield — Dry-Run Mode (§7.1.4b)
+
+When a user asks **"how much would I earn per year from X if I put Y USDT into delta-neutral?"**, call `get_delta_neutral_summary` directly — **no plan creation needed**:
+
+```
+get_delta_neutral_summary(
+  spot_provider = "binance",   // or "okx"
+  spot_symbol   = "DOT/USDT",
+  capital_usdt  = 100
+)
+```
+
+The tool fetches live funding rate and earn APY from the exchange and returns:
+- `Funding APY%` — annualised funding rate (using the actual settlement interval: 1h/4h/8h)
+- `Earn APY%` — best flexible-earn product APY for the base asset
+- `Combined APY%` — total annualised yield
+- `Annual combined` — projected USDT income per year (based on ~50% spot notional of capital)
+- `Daily combined` — projected USDT income per day
+- `Breakeven (funding only)` — days to recover entry + exit costs from funding alone
+- `Breakeven (funding + earn)` — days to break even including earn yield
+
+Optional parameters: `futures_symbol` (auto-derived as `DOT/USDT:USDT`), `futures_provider`, `spot_account`, `futures_account`, `leverage` (default 1).
+
+### Example answer for "how much from DOT at 100 USDT on Binance?"
+
+```
+Dry-run yield projection: DOT/USDT on binance · 100.00 USDT capital
+
+⚡ PROJECTED YIELD (live market rates)
+  Funding APY:        21.90%  (rate 0.000100, interval 4h)
+  Earn APY:            3.20%
+  Combined APY:       25.10%
+
+  Annual combined:   +12.55 USDT  (25.10% × 50.00 USDT spot notional)
+  Breakeven (funding + earn): 2.93 days
+```
+
+> Note: projections use live rates which change each funding period. Actual returns will vary.
+> The notional used is `capital × 0.5` (50 USDT of 100), as ~half the capital goes to spot
+> and the other half covers futures margin at 1× leverage.
+
 ## Earning the Spot Leg (§7.1.5)
 
 The spot-long leg of a delta-neutral strategy can earn additional yield from flexible-savings products offered by the exchange, **on top of the funding APR from the futures short leg**. This earn APY compounds the total return, though it is **variable, tiered, and not guaranteed**.
@@ -394,13 +435,104 @@ The spot-long leg of a delta-neutral strategy can earn additional yield from fle
 When you scan opportunities with `include_earn=true` (default), the scanner fetches flexible-earn APY for each asset and shows:
 
 - **Earn% column**: APY of the flexible-earn product for that asset on that exchange (e.g., 3.5%). Shows "-" if no product is available.
-- **Combined% column**: Funding APR + Earn APY (e.g., 5.2% funding + 3.5% earn = 8.7% combined). This is the total annualized yield if you hold both legs.
+- **Combined% column**: Funding APR + Earn APY (e.g., 5.2% funding + 3.5% earn = 8.7% combined). This is the total annualized yield if you hold both legs. In `get_delta_neutral_summary` and the web Yield card, the 3M/6M/12M combined values pair their respective funding and earn window averages for accuracy (3M combined = 3M funding avg + 3M earn avg, not the current earn rate).
 - **combined_apy sort field**: Sort opportunities by `combined_apy` (desc by default) to rank by total return, not funding alone. This often changes which opportunities rank at the top.
 
 ### Tools
 
 - `earn_overview` (read): Fetch and display all available products and your current positions. Degrades gracefully if positions require API keys you don't have.
 - `manage_earn_position` (write, confirm-gated): Subscribe, redeem, or toggle auto-subscribe for an earn product. Dry-run with `confirm=false`; execute with `confirm=true`.
+
+## Spread (Price Basis) Monitoring (§7.1.6)
+
+In addition to funding rates, delta-neutral strategies depend on the **price basis spread** between spot and futures markets. A favorable spread at entry and exit can significantly improve returns, while an unfavorable spread can erode expected profit. KhunQuant monitors and gates on these spread metrics to help you capture better entry prices and exit opportunistically.
+
+### Key Concepts
+
+**Entry Spread** (futures relative to spot):
+```
+entry_spread % = (futuresPrice - spotPrice) / spotPrice × 100
+```
+
+- **Positive spread** = Futures premium (carry exists; you collect funding from this premium).
+- **Negative spread** = Futures discount (most common; futures trading at a discount to spot).
+- **Higher (less negative) = more favorable**: For example, -0.148% is more attractive than -0.300% because you pay less to open the hedge.
+
+Example: Spot price 0.7435 USD, futures price 0.7424 USD → entry spread = (0.7424 - 0.7435) / 0.7435 × 100 = **-0.148%**
+
+**Exit Spread** (spot relative to futures; basis convergence):
+```
+exit_spread % = (spotPrice - futuresPrice) / futuresPrice × 100
+```
+
+- **Positive spread** = Basis has converged or inverted; spot is now above futures (favorable exit opportunity).
+- **Example**: Futures 0.7424, spot 0.7435 → exit spread = (0.7435 - 0.7424) / 0.7424 × 100 = **+0.148%**
+
+### Entry Spread Gating
+
+When you set `entry_rules.min_entry_spread_pct` in a plan (default: 0 = disabled), the system enforces a **minimum spread threshold** before opening a position.
+
+**How it works:**
+- When you call `open_delta_neutral_position`, the tool fetches live spot and futures prices.
+- It computes the current entry spread.
+- If live spread ≥ `min_entry_spread_pct`: Position opens (green light).
+- If live spread < `min_entry_spread_pct`: Opening is blocked with a clear error; no orders are placed.
+
+**Use cases:**
+- **Avoid expensive entries**: Set `min_entry_spread_pct = -0.1` to ensure you only open when the futures discount is at least -0.1%. Skip trades where the spread is too wide or has inverted.
+- **Wait for better prices**: In choppy markets, spreads fluctuate. Set a threshold and try opening again when the spread improves.
+- **Dry-run to scout**: Call `open_delta_neutral_position` with `confirm=false` to see the live spread vs. your target without placing orders.
+
+Example: You want to trade ETH but only if the futures discount is at least -0.05%. Set `entry_rules.min_entry_spread_pct = -0.05`. The tool will block entry if the current spread is -0.3% or worse.
+
+### Exit Spread Targeting
+
+When you set `exit_rules.target_exit_spread_pct` in a plan (default: 0 = disabled), the monitor watches for a **favorable convergence** of the basis at which it recommends unwinding the position.
+
+**How it works:**
+- During each monitor tick, the system computes the current exit spread.
+- If exit spread ≥ `target_exit_spread_pct`: Condition is met; the plan issues a recommendation or auto-unwinds (depending on execution mode).
+- The breach code is `exit_spread_target_met`; recommended action is "unwind".
+
+**Execution mode behavior:**
+- **`monitor`** / **`approval`**: Alert + recommend unwind; wait for your approval.
+- **`semi_auto`** / **`full_auto`**: Automatically unwind the position when spread target is reached.
+
+**Use cases:**
+- **Lock in gains early**: Set `target_exit_spread_pct = 0.05` to exit automatically if the basis converges 0.05% or more in your favor, capturing quick wins without waiting for full funding payoff.
+- **Scalp basis spreads**: Use tight thresholds (e.g., 0.01%) for high-frequency exits on stable coins.
+- **Let funding accrue**: Set `target_exit_spread_pct = 0` (disabled) to ignore spread entirely and close only on funding targets or manual signal.
+
+Example: You opened a 5,000 USDT ETH position with entry spread -0.15%. Set `target_exit_spread_pct = 0.05` to exit when the spread has converged 0.20% (to +0.05%), locking in basis gains. The monitor will recommend or auto-close at that point.
+
+### Spread Monitoring in the Web UI
+
+Active plans display live entry and exit spreads in the **Spread card**:
+- **Entry spread (%)**: Current market spread vs. your entry point.
+- **Exit spread (%)**: Basis convergence window (how much profit is available from spread alone).
+- **Historical chart**: 30-day history of both spreads and funding APR for correlation analysis.
+
+Monitor snapshots also capture `entry_spread_pct` and `exit_spread_pct` at each tick for historical reference.
+
+### Fetching Spread Data On-Demand
+
+Use the `get_delta_neutral_spread` tool to fetch current and historical spreads for any symbol pair:
+
+```json
+{
+  "spot_provider": "binance",
+  "spot_symbol": "ETH/USDT",
+  "futures_provider": "binance",
+  "futures_symbol": "ETH/USDT:USDT"
+}
+```
+
+Returns:
+- **Current entry spread %** and **current exit spread %**
+- **3-day, 7-day, 14-day, 30-day funding APR windows** (for context)
+- Formatted output showing spread percentages and APR history
+
+Use this to scout opportunities, validate spread assumptions before creating a plan, or evaluate historical spread behavior on a symbol pair.
 
 ## Funding Analysis (§7.2)
 
@@ -545,6 +677,8 @@ Set or accept default thresholds:
 - **Max slippage expected** (default 20 bps = 0.2%): Warn if estimated slippage exceeds this.
 - **Funding reversal cycles** (default 2): Alert if funding is negative for 2+ consecutive monitoring periods.
 - **Max leverage** (for spot/futures balance; default 1x): Reject plans that require unsafe leverage.
+- **Min entry spread** (`entry_rules.min_entry_spread_pct`, default 0 = disabled): Minimum entry spread (%) required to open a position. Example: -0.1 means "only open if futures discount is at least -0.1%". Set to 0 to disable spread gating.
+- **Target exit spread** (`exit_rules.target_exit_spread_pct`, default 0 = disabled): Target exit spread (%) that triggers an unwind recommendation or auto-close. Example: 0.05 means "close when basis converges 0.05% in my favor". Set to 0 to disable spread-based exit targeting.
 
 ### Monitor Interval
 
@@ -717,6 +851,8 @@ This skill uses the following existing tools. Note that **dedicated delta-neutra
 
 ### Market Data
 
+- `get_delta_neutral_spread` — Fetch live entry/exit spread + 3d/7d/14d/30d funding APR for a symbol pair. Parameters: `spot_provider`, `spot_symbol`, `futures_provider`, `futures_symbol` (+ optional `spot_account`, `futures_account`). Returns formatted text with spread percentages and APR windows. Use to scout entries and validate spread assumptions before creating a plan.
+- `get_delta_neutral_earn` — Fetch flexible-savings (earn) APY for a spot asset: the current best rate plus trailing **3M/6M/12M averages** and min/max from the exchange's earn rate history (paginated: hourly on OKX, daily on Binance, up to ~1y). Parameters: `provider`, `asset` (e.g. `"ZEC"` or `"ZEC/USDT"`), optional `account`. OKX rates are **public** (no credentials needed); Binance Simple Earn requires credentials. Use to gauge the earn leg independently before building a plan, or to verify the earn windows shown in `get_delta_neutral_summary`.
 - `get_ticker` — Current bid/ask price and 24h volume for a symbol.
 - `get_orderbook` — Order book snapshot; use to estimate slippage (spread, depth).
 - `get_ohlcv` — Historical price bars; use to correlate funding spikes with price moves.
@@ -736,14 +872,15 @@ This skill uses the following existing tools. Note that **dedicated delta-neutra
 
 ### Execution (Once Available)
 
-- `create_delta_neutral_plan` — Create and persist a plan; registers cron monitor job. Accepts `leverage` parameter and `risk_policy.max_leverage`; sizes both legs to equal notional; rejects if leverage exceeds max.
+- `create_delta_neutral_plan` — Create and persist a plan; registers cron monitor job. Accepts `leverage` parameter and `risk_policy.max_leverage`; sizes both legs to equal notional; rejects if leverage exceeds max. Supports `entry_rules.min_entry_spread_pct` and `exit_rules.target_exit_spread_pct` for spread-based entry gating and exit targeting.
 - `list_delta_neutral_plans` — List all active and inactive plans with health status.
-- `get_delta_neutral_plan` — Retrieve a specific plan and its recent monitor snapshots, alerts, and execution history.
-- `update_delta_neutral_plan` — Update plan name, monitor interval, risk thresholds, or pause/resume. Accepts `leverage` parameter: for draft/ready plans, stored for next open; for active plans, requires `confirm=true` and applies live on exchange with liquidation-distance re-validation.
+- `get_delta_neutral_plan` — Retrieve a specific plan and its recent monitor snapshots, alerts, and execution history. For draft/ready plans with no open position, automatically fetches live funding rate and earn APY and shows projected annual yield and breakeven days.
+- `update_delta_neutral_plan` — Update plan name, monitor interval, risk thresholds, spread parameters, or pause/resume. Accepts `leverage` parameter: for draft/ready plans, stored for next open; for active plans, requires `confirm=true` and applies live on exchange with liquidation-distance re-validation.
 - `delete_delta_neutral_plan` — Delete a draft or closed plan.
-- `get_delta_neutral_summary` — Fetch plan-level PnL summary from the delta-neutral store.
+- `get_delta_neutral_summary` — Get plan P&L summary, or **dry-run yield projection with no plan needed** (pass `spot_provider` + `spot_symbol` + `capital_usdt` instead of `plan_id`). Active plans: live health, P&L breakdown, daily yield, and breakeven. Draft/ready plans: live-fetched projection. Dry-run: instant projection for any asset/exchange/capital without creating anything. The projection reports **Earn APY for current / 3M / 6M / 12M windows** (from earn rate history) and **Combined APY that pairs the matched funding and earn windows** (3M combined = 3M funding avg + 3M earn avg, etc.) — not a windowed funding rate mixed with a point-in-time earn rate.
 - `get_delta_neutral_history` — Fetch execution history, monitor snapshots, and alerts for a plan.
-- `open_delta_neutral_position` — Execute a two-leg opening (spot long + futures short) with full approval workflow and state machine.
+- `render_delta_neutral_yield_chart` — Render and send the Yield History chart (funding rate, funding APY%, earn APY%, combined APY%) as a PNG image to the chat. Selectable time period (7d/14d/30d/3m/6m/all) and optional column filter.
+- `open_delta_neutral_position` — Execute a two-leg opening (spot long + futures short) with full approval workflow and state machine. Checks live entry spread against `entry_rules.min_entry_spread_pct` before placing orders; blocks if spread is below the configured minimum.
 - `unwind_delta_neutral_position` — Execute a two-leg closing (sell spot + close futures short) with recovery path.
 - `resize_delta_neutral_position` — Adjust the notional size of an active plan by resizing both legs equally. Accepts `delta_pct` or `delta_notional_usdt` (exactly one required); active plans only. Dry-run with `confirm=false`; execute with `confirm=true`. Partial fill transitions plan to `recovery_required`.
 
@@ -945,12 +1082,48 @@ Example call:
   "futures_symbol": "BTC/USDT:USDT",
   "capital_usdt": 10000,
   "leverage": 2,
+  "futures_margin_mode": "isolated",
   "risk_policy": {
     "max_leverage": 3,
     "min_liquidation_distance_pct": 25
   }
 }
 ```
+
+### Futures Margin Mode (cross vs isolated)
+
+The `futures_margin_mode` parameter controls how margin is allocated on the futures leg:
+
+| Mode | Behavior | When to use |
+|------|----------|-------------|
+| `cross` (default) | Shares the entire futures wallet as margin. A liquidation event on this position draws from all funds in the futures account, putting other open positions at risk. | Safe only at 1–2× leverage when no other positions are open. |
+| `isolated` | Caps exposure to the margin posted on this position only. Liquidation does **not** affect other futures positions or wallet balance. | **Strongly recommended at leverage > 2×**, or whenever other positions are open. |
+
+**Rule of thumb**: if the user says "use 5× leverage" or asks to protect other positions, always use `isolated`.
+
+Set at plan creation:
+```json
+{
+  "plan_name": "ALGO Funding Harvest",
+  "futures_margin_mode": "isolated",
+  "leverage": 5,
+  ...
+}
+```
+
+Change before opening (draft/ready plans only):
+```json
+{
+  "plan_id": 42,
+  "futures_margin_mode": "isolated"
+}
+```
+
+**Cannot be changed on an active position** — you must unwind and reopen to change margin mode on the exchange.
+
+`prepare_delta_neutral_plan` will emit a warning if `cross` margin is detected at leverage > 2×.
+
+---
 
 ### Editing Leverage on Existing Plans
 

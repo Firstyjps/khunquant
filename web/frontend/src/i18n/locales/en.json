@@ -507,6 +507,14 @@
           "dca_snapshot": "DCA Snapshot",
           "delta_neutral": "Delta-Neutral"
         },
+        "delta_neutral": {
+          "spread_card_title": "Spread",
+          "entry_spread": "Entry Spread",
+          "exit_spread": "Exit Spread",
+          "entry_spread_target": "Entry Spread Gate",
+          "exit_spread_target": "Exit Spread Target",
+          "spread_disabled": "disabled"
+        },
         "snapshot": {
           "empty": "No snapshots found.",
           "select_hint": "Select a snapshot to view details.",

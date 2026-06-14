@@ -61,6 +61,10 @@ func Evaluate(input EvaluationInput) HealthEvaluation {
 	deltaDrift := computeDeltaDrift(spotValueUSDT, futuresNotionalUSDT)
 	result.Snapshot.DeltaDriftPct = deltaDrift
 
+	// Step 3.5: Propagate spread values from input
+	result.Snapshot.EntrySpreadPct = input.EntrySpreadPct
+	result.Snapshot.ExitSpreadPct = input.ExitSpreadPct
+
 	// Step 4: Compute liquidation distance
 	liquidationDistance := computeLiquidationDistance(input.FuturesState.MarkPrice, input.FuturesState.LiquidationPrice)
 	result.Snapshot.LiquidationDistancePct = liquidationDistance
@@ -98,6 +102,8 @@ func Evaluate(input EvaluationInput) HealthEvaluation {
 		marginState,
 		input.FundingInfo,
 		input.Plan.RiskPolicy,
+		input.ExitSpreadPct,
+		input.Plan.ExitRules,
 	)
 	result.BreachCodes = breachCodes
 	result.ThresholdBreached = len(breachCodes) > 0
@@ -331,6 +337,8 @@ func detectBreaches(
 	marginState string,
 	fundingInfo FundingInfo,
 	policy RiskPolicy,
+	exitSpreadPct float64,
+	exitRules ExitRules,
 ) []string {
 	var breaches []string
 
@@ -366,6 +374,11 @@ func detectBreaches(
 		breaches = append(breaches, "margin_danger")
 	} else if marginState == "critical" {
 		breaches = append(breaches, "margin_critical")
+	}
+
+	// Exit spread target: profit-taking signal (non-critical)
+	if exitRules.TargetExitSpreadPct != 0 && exitSpreadPct >= exitRules.TargetExitSpreadPct {
+		breaches = append(breaches, "exit_spread_target_met")
 	}
 
 	return breaches
@@ -453,6 +466,10 @@ func recommendAction(breachCodes []string, snapshot MonitorSnapshot) string {
 
 	if containsAny(breachCodes, []string{"funding_below_min"}) {
 		return "Current funding rate is below policy minimum. Plan profitability is declining."
+	}
+
+	if containsAny(breachCodes, []string{"exit_spread_target_met"}) {
+		return "Exit spread target met. Consider unwinding to lock in gains from basis convergence."
 	}
 
 	return "Plan threshold breached. Review metrics and consider appropriate action."

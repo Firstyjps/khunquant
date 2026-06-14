@@ -36,7 +36,7 @@ func (t *OpenDeltaNeutralPositionTool) Parameters() map[string]any {
 		"properties": map[string]any{
 			"plan_id": map[string]any{
 				"type":        "integer",
-			"description": "ID of the delta-neutral plan to open. Accepts draft, ready, or failed (retry).",
+				"description": "ID of the delta-neutral plan to open. Accepts draft, ready, or failed (retry).",
 			},
 			"confirm": map[string]any{
 				"type":        "boolean",
@@ -101,9 +101,42 @@ func (t *OpenDeltaNeutralPositionTool) Execute(ctx context.Context, args map[str
 			WithError(broker.ErrRateLimited)
 	}
 
+	// --- Entry spread gate ---
+	// Fetch the live spread once and reuse it for both the gate and the dry-run
+	// review. When a minimum is configured the gate fails CLOSED: if the live
+	// spread cannot be determined we block rather than silently allowing entry.
+	liveSpread, _, _, spreadOK, spreadDetail := t.fetchLiveEntrySpread(ctx, plan)
+	if plan.EntryRules.MinEntrySpreadPct != 0 {
+		if !spreadOK {
+			return ErrorResult(fmt.Sprintf(
+				"⛔ Entry spread gate: a minimum spread of %.4f%% is required but the live spread "+
+					"could not be determined (%s). Refusing to open — retry once market data is available, "+
+					"or clear entry_rules.min_entry_spread_pct to disable the gate.",
+				plan.EntryRules.MinEntrySpreadPct, spreadDetail))
+		}
+		if liveSpread < plan.EntryRules.MinEntrySpreadPct {
+			return ErrorResult(fmt.Sprintf(
+				"⛔ Entry spread gate: current spread %.4f%% is below minimum %.4f%%.\n"+
+					"Use update_delta_neutral_plan to adjust entry_rules.min_entry_spread_pct, or wait for the spread to improve.",
+				liveSpread, plan.EntryRules.MinEntrySpreadPct))
+		}
+	}
+
 	// --- Dry-run gate (§7.8) ---
 	if !confirm {
 		review := formatExecutionReview(plan)
+
+		// Show live spread in dry-run output (reusing the value fetched above).
+		minStr := "disabled"
+		if plan.EntryRules.MinEntrySpreadPct != 0 {
+			minStr = fmt.Sprintf("%.4f%%", plan.EntryRules.MinEntrySpreadPct)
+		}
+		if spreadOK {
+			review += fmt.Sprintf("\nLive Entry Spread: %.4f%% (min required: %s)", liveSpread, minStr)
+		} else {
+			review += fmt.Sprintf("\nLive Entry Spread: unavailable (%s) (min required: %s)", spreadDetail, minStr)
+		}
+
 		if plan.CrossExchange {
 			review += "\n[CROSS-EXCHANGE WARNING] Spot and futures on different exchanges — slippage and timing risk."
 		}
@@ -307,7 +340,17 @@ func (t *OpenDeltaNeutralPositionTool) executeFuturesLeg(ctx context.Context, pl
 	if mkt.Limits.Amount.Min != nil && *mkt.Limits.Amount.Min > 0 {
 		minAmount = *mkt.Limits.Amount.Min
 	}
-	numContracts, err := contractsFromNotional(plan.FuturesNotionalUSDT, markPrice, perContractSize, minAmount)
+	// Size futures to cover the NET spot quantity after spot taker-fee deduction.
+	// Spot fee is taken from received tokens (not USDT), so:
+	//   net_spot_qty = (SpotNotionalUSDT / spot_price) × (1 - fee)
+	//   ≈ SpotNotionalUSDT × (1 - fee) / futures_price  (prices are nearly equal)
+	// Using SpotNotionalUSDT × (1-fee) instead of FuturesNotionalUSDT removes the
+	// ~7 ALGO unhedged gap seen previously; residual mismatch is only contract rounding.
+	// TODO: fetch actual spot taker fee from the user's account tier via the exchange API
+	// instead of hardcoding 0.1%. Users on higher tiers or using fee tokens (BNB/OKX) pay less.
+	const spotTakerFee = 0.001 // 0.1% — OKX / Binance default spot taker rate
+	hedgeNotional := plan.SpotNotionalUSDT * (1 - spotTakerFee)
+	numContracts, err := contractsFromNotional(hedgeNotional, markPrice, perContractSize, minAmount)
 	if err != nil {
 		return false, fmt.Errorf("contract count computation: %w", err)
 	}
@@ -338,7 +381,8 @@ func (t *OpenDeltaNeutralPositionTool) executeFuturesLeg(ctx context.Context, pl
 		return false, fmt.Errorf("set leverage: %w", err)
 	}
 
-	// Create the futures order
+	// Create the futures order — pass MarginMode so OKX sets tdMode=isolated/cross on the order.
+	// set_leverage alone is not enough; OKX also requires tdMode on each order.
 	order, err := fp.CreateFuturesOrder(ctx, broker.FuturesOrderRequest{
 		Symbol:       plan.FuturesSymbol,
 		OrderType:    "market",
@@ -346,6 +390,7 @@ func (t *OpenDeltaNeutralPositionTool) executeFuturesLeg(ctx context.Context, pl
 		Amount:       numContracts,
 		PositionSide: positionSide,
 		ReduceOnly:   false,
+		MarginMode:   plan.FuturesMarginMode,
 	})
 	if err != nil {
 		leg.State = string(deltaneutral.LegStateFailed)
@@ -354,11 +399,41 @@ func (t *OpenDeltaNeutralPositionTool) executeFuturesLeg(ctx context.Context, pl
 		return false, err
 	}
 
+	// OKX returns order ID immediately but fill data (Filled, Average, Cost) requires
+	// a subsequent FetchFuturesOrder call. Fetch once to get actual fill details.
+	// Use mergeOrderFillData so the create response is not discarded wholesale —
+	// on Binance the create response may carry commission that FetchOrder does not.
+	if oid := orderID(order); oid != "" {
+		if fetched, fetchErr := fp.FetchFuturesOrder(ctx, oid, plan.FuturesSymbol); fetchErr == nil {
+			order = mergeOrderFillData(order, fetched)
+		}
+	}
+
+	// Use actual fill data; fall back to pre-fill estimates when unavailable.
+	filledBase := baseQty
+	avgFill := markPrice
+	filledNotional := plan.FuturesNotionalUSDT
+	if order.Filled != nil && *order.Filled > 0 {
+		filledBase = *order.Filled * perContractSize // contracts → base currency
+	}
+	if order.Average != nil && *order.Average > 0 {
+		avgFill = *order.Average
+	}
+	if order.Cost != nil && *order.Cost > 0 {
+		filledNotional = *order.Cost
+	}
+
 	leg.OrderID = orderID(order)
 	leg.State = string(deltaneutral.LegStateFilled)
-	leg.FilledQuantity = baseQty
-	leg.FilledNotionalUSDT = plan.FuturesNotionalUSDT
-	leg.AvgFillPrice = markPrice
+	leg.FilledQuantity = filledBase
+	leg.FilledNotionalUSDT = filledNotional
+	leg.AvgFillPrice = avgFill
+	if order.Fee.Cost != nil && *order.Fee.Cost > 0 {
+		leg.FeeUSDT = -(*order.Fee.Cost) // futures fees are settled in USDT; negate so fees are negative (cost)
+	}
+
+	// Update plan with actual fill cost so the P&L card uses real entry notional.
+	plan.FuturesNotionalUSDT = filledNotional
 
 	_, err = t.store.SaveExecutionLeg(ctx, leg)
 	return err == nil, err
@@ -427,17 +502,81 @@ func (t *OpenDeltaNeutralPositionTool) executeSpotLeg(ctx context.Context, plan 
 		return false, err
 	}
 
+	// OKX returns order ID immediately but fill details (Filled, Average, Cost) are
+	// only populated in a subsequent FetchOrder call. Fetch once to get actual data.
+	// Use mergeOrderFillData so the create response is not discarded wholesale —
+	// on Binance the create response may carry commission that FetchOrder does not.
+	if oid := orderID(order); oid != "" {
+		if fetched, fetchErr := tp.FetchOrder(ctx, oid, plan.SpotSymbol); fetchErr == nil {
+			order = mergeOrderFillData(order, fetched)
+		}
+	}
+
+	// Use actual fill data; fall back to pre-fill estimates when unavailable.
+	// For OKX spot buys, order.Filled is gross ALGO before fee deduction.
+	// order.Cost is USDT paid. Fee is deducted from received ALGO, not USDT.
+	filledQty := quantity
+	avgFill := price
+	filledNotional := plan.SpotNotionalUSDT
+	if order.Filled != nil && *order.Filled > 0 {
+		filledQty = *order.Filled
+	}
+	if order.Average != nil && *order.Average > 0 {
+		avgFill = *order.Average
+	}
+	if order.Cost != nil && *order.Cost > 0 {
+		filledNotional = *order.Cost
+	}
+
 	leg.OrderID = orderID(order)
 	leg.State = string(deltaneutral.LegStateFilled)
-	leg.FilledQuantity = quantity
-	leg.FilledNotionalUSDT = plan.SpotNotionalUSDT
-	leg.AvgFillPrice = price
+	leg.FilledQuantity = filledQty
+	leg.FilledNotionalUSDT = filledNotional
+	leg.AvgFillPrice = avgFill
+	// Spot fee: side-aware conversion (buy fee is in base currency; sell fee is in USDT).
+	// See spotFeeCostUSDT for the full rationale.
+	if fee := spotFeeCostUSDT(order, plan.SpotSide, avgFill); fee > 0 {
+		leg.FeeUSDT = -fee // negative = cost
+	}
+
+	// Update plan with actual fill cost so the P&L card uses real entry notional.
+	plan.SpotNotionalUSDT = filledNotional
 
 	_, err = t.store.SaveExecutionLeg(ctx, leg)
 	return err == nil, err
 }
 
 // formatExecutionReview formats the execution review for dry-run output (§7.8).
+// fetchLiveEntrySpread fetches the current entry spread (futures mark vs spot last)
+// for a plan. Returns the spread %, the underlying prices, ok=true on success, and a
+// human-readable detail string describing the failure when ok=false.
+func (t *OpenDeltaNeutralPositionTool) fetchLiveEntrySpread(ctx context.Context, plan *deltaneutral.Plan) (spread, markPrice, spotPrice float64, ok bool, detail string) {
+	sp, spErr := broker.CreateProviderForAccount(plan.SpotProvider, plan.SpotAccount, t.cfg)
+	if spErr != nil {
+		return 0, 0, 0, false, fmt.Sprintf("spot provider: %v", spErr)
+	}
+	md, isMD := sp.(broker.MarketDataProvider)
+	if !isMD {
+		return 0, 0, 0, false, "spot provider does not support market data"
+	}
+	ticker, tickerErr := md.FetchTicker(ctx, plan.SpotSymbol)
+	if tickerErr != nil || ticker.Last == nil || *ticker.Last <= 0 {
+		return 0, 0, 0, false, fmt.Sprintf("spot price unavailable: %v", tickerErr)
+	}
+	spotPrice = *ticker.Last
+	fp, fpErr := futuresProvider(ctx, t.cfg, plan.FuturesProvider, plan.FuturesAccount)
+	if fpErr != nil {
+		return 0, 0, 0, false, fmt.Sprintf("futures provider: %v", fpErr)
+	}
+	mp, mpErr := fp.FetchFuturesMarkPrice(ctx, plan.FuturesSymbol)
+	if mpErr != nil || mp <= 0 {
+		return 0, 0, 0, false, fmt.Sprintf("futures mark price unavailable: %v", mpErr)
+	}
+	markPrice = mp
+	spread = deltaneutral.EntrySpreadPct(markPrice, spotPrice)
+	return spread, markPrice, spotPrice, true, ""
+}
+
 func formatExecutionReview(plan *deltaneutral.Plan) string {
 	return fmt.Sprintf(
 		"Execution review (DRY-RUN):\n"+

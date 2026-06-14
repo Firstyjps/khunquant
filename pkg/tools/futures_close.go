@@ -79,7 +79,7 @@ func (t *FuturesClosePositionTool) Execute(ctx context.Context, args map[string]
 		return ErrorResult(fmt.Sprintf("futures_close_position: fetch positions: %v", err)).WithError(err)
 	}
 	var closeAmount float64
-	var positionSide string
+	var positionSide, positionMarginMode string
 	for _, p := range positions {
 		if p.Contracts == nil || *p.Contracts == 0 {
 			continue
@@ -94,6 +94,9 @@ func (t *FuturesClosePositionTool) Execute(ctx context.Context, args map[string]
 		closeAmount = math.Abs(*p.Contracts)
 		if p.Side != nil {
 			positionSide = *p.Side
+		}
+		if p.MarginMode != nil {
+			positionMarginMode = *p.MarginMode
 		}
 		break
 	}
@@ -118,6 +121,7 @@ func (t *FuturesClosePositionTool) Execute(ctx context.Context, args map[string]
 		Price:        limitPrice,
 		PositionSide: positionSide,
 		ReduceOnly:   true,
+		MarginMode:   positionMarginMode,
 	})
 	if err != nil {
 		return ErrorResult(fmt.Sprintf("futures_close_position failed: %v", err)).WithError(err)
@@ -218,7 +222,7 @@ func (t *FuturesReducePositionTool) Execute(ctx context.Context, args map[string
 		return ErrorResult(fmt.Sprintf("futures_reduce_position: fetch positions: %v", err)).WithError(err)
 	}
 	var positionSize float64
-	var positionSide string
+	var positionSide, posMarginMode string
 	for _, p := range positions {
 		if p.Contracts == nil || *p.Contracts == 0 {
 			continue
@@ -233,6 +237,9 @@ func (t *FuturesReducePositionTool) Execute(ctx context.Context, args map[string
 		positionSize = math.Abs(*p.Contracts)
 		if p.Side != nil {
 			positionSide = *p.Side
+		}
+		if p.MarginMode != nil {
+			posMarginMode = *p.MarginMode
 		}
 		break
 	}
@@ -269,6 +276,7 @@ func (t *FuturesReducePositionTool) Execute(ctx context.Context, args map[string
 		Price:        limitPrice,
 		PositionSide: positionSide,
 		ReduceOnly:   true,
+		MarginMode:   posMarginMode,
 	})
 	if err != nil {
 		return ErrorResult(fmt.Sprintf("futures_reduce_position failed: %v", err)).WithError(err)
@@ -332,8 +340,8 @@ func (t *FuturesEmergencyFlattenTool) Execute(ctx context.Context, args map[stri
 		return ErrorResult(fmt.Sprintf("futures_emergency_flatten: fetch positions: %v", err)).WithError(err)
 	}
 	type activePos struct {
-		symbol, side string
-		contracts    float64
+		symbol, side, marginMode string
+		contracts                float64
 	}
 	var active []activePos
 	for _, p := range positions {
@@ -346,6 +354,9 @@ func (t *FuturesEmergencyFlattenTool) Execute(ctx context.Context, args map[stri
 		}
 		if p.Side != nil {
 			ap.side = *p.Side
+		}
+		if p.MarginMode != nil {
+			ap.marginMode = *p.MarginMode
 		}
 		active = append(active, ap)
 	}
@@ -389,6 +400,7 @@ func (t *FuturesEmergencyFlattenTool) Execute(ctx context.Context, args map[stri
 			Amount:       ap.contracts,
 			PositionSide: ap.side,
 			ReduceOnly:   true,
+			MarginMode:   ap.marginMode,
 		})
 		if closeErr != nil {
 			sb.WriteString(fmt.Sprintf("    %s %s: FAILED — %v\n", ap.side, ap.symbol, closeErr))

@@ -76,6 +76,18 @@ CREATE TABLE IF NOT EXISTS delta_neutral_monitor_snapshots (
     futures_unrealized_pnl_usdt REAL   NOT NULL DEFAULT 0,
 
     current_funding_rate       REAL    NOT NULL DEFAULT 0,
+    funding_apy_pct            REAL    NOT NULL DEFAULT 0,
+    earn_apy_pct               REAL    NOT NULL DEFAULT 0,
+    combined_apy_pct           REAL    NOT NULL DEFAULT 0,
+    funding_apy_90d_pct        REAL    NOT NULL DEFAULT 0,
+    funding_apy_180d_pct       REAL    NOT NULL DEFAULT 0,
+    funding_apy_365d_pct       REAL    NOT NULL DEFAULT 0,
+    earn_apy_90d_pct           REAL    NOT NULL DEFAULT 0,
+    earn_apy_180d_pct          REAL    NOT NULL DEFAULT 0,
+    earn_apy_365d_pct          REAL    NOT NULL DEFAULT 0,
+    combined_apy_90d_pct       REAL    NOT NULL DEFAULT 0,
+    combined_apy_180d_pct      REAL    NOT NULL DEFAULT 0,
+    combined_apy_365d_pct      REAL    NOT NULL DEFAULT 0,
     estimated_next_funding_usdt REAL   NOT NULL DEFAULT 0,
     funding_state              TEXT    NOT NULL DEFAULT '',
 
@@ -187,6 +199,23 @@ var migrations = []string{
         fetched_at       TEXT    NOT NULL,
         created_at       TEXT    NOT NULL);`,
 	`CREATE INDEX IF NOT EXISTS idx_dn_fee_snapshots_plan ON plan_fee_snapshots(plan_id);`,
+	// Add funding APY yield columns to existing snapshot tables.
+	`ALTER TABLE delta_neutral_monitor_snapshots ADD COLUMN funding_apy_pct   REAL NOT NULL DEFAULT 0;`,
+	`ALTER TABLE delta_neutral_monitor_snapshots ADD COLUMN earn_apy_pct      REAL NOT NULL DEFAULT 0;`,
+	`ALTER TABLE delta_neutral_monitor_snapshots ADD COLUMN combined_apy_pct  REAL NOT NULL DEFAULT 0;`,
+	// Add price-basis spread columns to snapshots (one per statement; idempotent via "duplicate column" guard).
+	`ALTER TABLE delta_neutral_monitor_snapshots ADD COLUMN entry_spread_pct REAL NOT NULL DEFAULT 0;`,
+	`ALTER TABLE delta_neutral_monitor_snapshots ADD COLUMN exit_spread_pct  REAL NOT NULL DEFAULT 0;`,
+	// Add trailing earn + matched-window combined APY columns to snapshots (3M/6M/12M).
+	`ALTER TABLE delta_neutral_monitor_snapshots ADD COLUMN funding_apy_90d_pct   REAL NOT NULL DEFAULT 0;`,
+	`ALTER TABLE delta_neutral_monitor_snapshots ADD COLUMN funding_apy_180d_pct  REAL NOT NULL DEFAULT 0;`,
+	`ALTER TABLE delta_neutral_monitor_snapshots ADD COLUMN funding_apy_365d_pct  REAL NOT NULL DEFAULT 0;`,
+	`ALTER TABLE delta_neutral_monitor_snapshots ADD COLUMN earn_apy_90d_pct      REAL NOT NULL DEFAULT 0;`,
+	`ALTER TABLE delta_neutral_monitor_snapshots ADD COLUMN earn_apy_180d_pct     REAL NOT NULL DEFAULT 0;`,
+	`ALTER TABLE delta_neutral_monitor_snapshots ADD COLUMN earn_apy_365d_pct     REAL NOT NULL DEFAULT 0;`,
+	`ALTER TABLE delta_neutral_monitor_snapshots ADD COLUMN combined_apy_90d_pct  REAL NOT NULL DEFAULT 0;`,
+	`ALTER TABLE delta_neutral_monitor_snapshots ADD COLUMN combined_apy_180d_pct REAL NOT NULL DEFAULT 0;`,
+	`ALTER TABLE delta_neutral_monitor_snapshots ADD COLUMN combined_apy_365d_pct REAL NOT NULL DEFAULT 0;`,
 }
 
 // Alert represents a delta-neutral alert in the database.
@@ -540,6 +569,79 @@ func (s *Store) SetMonitorIntervalByCronJobID(ctx context.Context, cronJobID, in
 	return nil
 }
 
+// ActivePlansForFuturesSymbol returns IDs of active (or recovery_required) plans that
+// share the same futures_provider + futures_symbol as the given plan, excluding excludeID.
+// Used by the unwind tool to detect symbol conflicts before touching exchange positions.
+func (s *Store) ActivePlansForFuturesSymbol(ctx context.Context, provider, symbol string, excludeID int64) ([]int64, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id FROM delta_neutral_plans
+		 WHERE futures_provider = ? AND futures_symbol = ?
+		   AND status IN ('active', 'recovery_required')
+		   AND id != ?`,
+		provider, symbol, excludeID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// PlanOpenQuantities returns the net open base-currency quantities for this plan based on
+// execution history, summing across all both_legs_filled executions (which includes resizes):
+//
+//	futuresBase = SUM(futures sell legs) - SUM(futures buy legs)  → positive = net short open
+//	spotQty     = SUM(spot    buy  legs) - SUM(spot    sell legs) → positive = net long open
+//
+// Divide futuresBase by contractSize to get contracts for a close order.
+// Returns (0, 0, nil) when no filled executions exist (nothing to close).
+func (s *Store) PlanOpenQuantities(ctx context.Context, planID int64) (futuresBase float64, spotQty float64, err error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT l.leg_type, l.side, COALESCE(SUM(l.filled_quantity), 0)
+		 FROM delta_neutral_execution_legs l
+		 JOIN delta_neutral_executions e ON l.execution_id = e.id
+		 WHERE e.plan_id = ?
+		   AND e.state = 'both_legs_filled'
+		   AND l.state = 'filled'
+		 GROUP BY l.leg_type, l.side`,
+		planID,
+	)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var legType, side string
+		var qty float64
+		if err := rows.Scan(&legType, &side, &qty); err != nil {
+			return 0, 0, err
+		}
+		switch legType {
+		case string(LegTypeFutures):
+			if side == "sell" {
+				futuresBase += qty
+			} else {
+				futuresBase -= qty // resize decrease subtracts
+			}
+		case string(LegTypeSpot):
+			if side == "buy" {
+				spotQty += qty
+			} else {
+				spotQty -= qty // resize decrease subtracts
+			}
+		}
+	}
+	return futuresBase, spotQty, rows.Err()
+}
+
 // DeletePlan removes a plan and cascades delete its snapshots, alerts, and executions.
 func (s *Store) DeletePlan(ctx context.Context, id int64) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM delta_neutral_plans WHERE id = ?`, id)
@@ -560,17 +662,27 @@ func (s *Store) SaveSnapshot(ctx context.Context, snapshot *MonitorSnapshot) (in
 		`INSERT INTO delta_neutral_monitor_snapshots
 		 (plan_id, checked_at, spot_price, spot_quantity, spot_value_usdt, futures_mark_price,
 		  futures_contracts, futures_notional_usdt, futures_unrealized_pnl_usdt,
-		  current_funding_rate, estimated_next_funding_usdt, funding_state, delta_drift_pct,
+		  current_funding_rate, funding_apy_pct, earn_apy_pct, combined_apy_pct,
+		  funding_apy_90d_pct, funding_apy_180d_pct, funding_apy_365d_pct,
+		  earn_apy_90d_pct, earn_apy_180d_pct, earn_apy_365d_pct,
+		  combined_apy_90d_pct, combined_apy_180d_pct, combined_apy_365d_pct,
+		  estimated_next_funding_usdt, funding_state, delta_drift_pct,
+		  entry_spread_pct, exit_spread_pct,
 		  liquidation_price, liquidation_distance_pct, margin_ratio_pct, margin_state,
 		  health_score, health_label, cross_exchange, threshold_breached, breach_codes_json,
 		  data_status, error_msg, agent_invoked, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		snapshot.PlanID, snapshot.CheckedAt.Format(time.RFC3339),
 		snapshot.SpotPrice, snapshot.SpotQuantity, snapshot.SpotValueUSDT,
 		snapshot.FuturesMarkPrice, snapshot.FuturesContracts, snapshot.FuturesNotionalUSDT,
 		snapshot.FuturesUnrealizedPnLUSDT,
-		snapshot.CurrentFundingRate, snapshot.EstimatedNextFundingUSDT, snapshot.FundingState,
-		snapshot.DeltaDriftPct, snapshot.LiquidationPrice, snapshot.LiquidationDistancePct,
+		snapshot.CurrentFundingRate, snapshot.FundingAPYPct, snapshot.EarnAPYPct, snapshot.CombinedAPYPct,
+		snapshot.Funding90dAPYPct, snapshot.Funding180dAPYPct, snapshot.Funding365dAPYPct,
+		snapshot.Earn90dAPYPct, snapshot.Earn180dAPYPct, snapshot.Earn365dAPYPct,
+		snapshot.Combined90dAPYPct, snapshot.Combined180dAPYPct, snapshot.Combined365dAPYPct,
+		snapshot.EstimatedNextFundingUSDT, snapshot.FundingState,
+		snapshot.DeltaDriftPct, snapshot.EntrySpreadPct, snapshot.ExitSpreadPct,
+		snapshot.LiquidationPrice, snapshot.LiquidationDistancePct,
 		snapshot.MarginRatioPct, snapshot.MarginState,
 		snapshot.HealthScore, snapshot.HealthLabel, boolToInt(snapshot.CrossExchange),
 		boolToInt(snapshot.ThresholdBreached), breachCodesJSON,
@@ -600,7 +712,12 @@ func (s *Store) ListSnapshots(ctx context.Context, planID int64, limit, offset i
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, plan_id, checked_at, spot_price, spot_quantity, spot_value_usdt,
 		        futures_mark_price, futures_contracts, futures_notional_usdt, futures_unrealized_pnl_usdt,
-		        current_funding_rate, estimated_next_funding_usdt, funding_state, delta_drift_pct,
+		        current_funding_rate, funding_apy_pct, earn_apy_pct, combined_apy_pct,
+		        funding_apy_90d_pct, funding_apy_180d_pct, funding_apy_365d_pct,
+		  earn_apy_90d_pct, earn_apy_180d_pct, earn_apy_365d_pct,
+		        combined_apy_90d_pct, combined_apy_180d_pct, combined_apy_365d_pct,
+		        estimated_next_funding_usdt, funding_state, delta_drift_pct,
+		        entry_spread_pct, exit_spread_pct,
 		        liquidation_price, liquidation_distance_pct, margin_ratio_pct, margin_state,
 		        health_score, health_label, cross_exchange, threshold_breached, breach_codes_json,
 		        data_status, error_msg, agent_invoked, created_at
@@ -630,7 +747,12 @@ func (s *Store) LatestSnapshot(ctx context.Context, planID int64) (*MonitorSnaps
 	row := s.db.QueryRowContext(ctx,
 		`SELECT id, plan_id, checked_at, spot_price, spot_quantity, spot_value_usdt,
 		        futures_mark_price, futures_contracts, futures_notional_usdt, futures_unrealized_pnl_usdt,
-		        current_funding_rate, estimated_next_funding_usdt, funding_state, delta_drift_pct,
+		        current_funding_rate, funding_apy_pct, earn_apy_pct, combined_apy_pct,
+		        funding_apy_90d_pct, funding_apy_180d_pct, funding_apy_365d_pct,
+		  earn_apy_90d_pct, earn_apy_180d_pct, earn_apy_365d_pct,
+		        combined_apy_90d_pct, combined_apy_180d_pct, combined_apy_365d_pct,
+		        estimated_next_funding_usdt, funding_state, delta_drift_pct,
+		        entry_spread_pct, exit_spread_pct,
 		        liquidation_price, liquidation_distance_pct, margin_ratio_pct, margin_state,
 		        health_score, health_label, cross_exchange, threshold_breached, breach_codes_json,
 		        data_status, error_msg, agent_invoked, created_at
@@ -643,6 +765,129 @@ func (s *Store) LatestSnapshot(ctx context.Context, planID int64) (*MonitorSnaps
 		return nil, nil
 	}
 	return snap, err
+}
+
+// SnapshotSeriesPoint is a lightweight row used for time-series charting.
+// It contains yield metrics + spread values + timestamp to keep payloads small.
+type SnapshotSeriesPoint struct {
+	CheckedAt          time.Time `json:"t"`
+	CurrentFundingRate float64   `json:"funding_rate"`
+	FundingAPYPct      float64   `json:"funding_apy"`
+	EarnAPYPct         float64   `json:"earn_apy"`
+	CombinedAPYPct     float64   `json:"combined_apy"`
+	EntrySpreadPct     float64   `json:"entry_spread_pct"`
+	ExitSpreadPct      float64   `json:"exit_spread_pct"`
+}
+
+// ListSnapshotSeries returns time-ordered yield metrics for a plan, optionally
+// filtered to rows on or after [since]. When the result set would exceed
+// maxPoints the rows are grouped into maxPoints evenly-sized time buckets and
+// each metric is averaged within its bucket (the bucket midpoint becomes the
+// timestamp). Pass maxPoints <= 0 to return all raw rows.
+func (s *Store) ListSnapshotSeries(ctx context.Context, planID int64, since time.Time, maxPoints int) ([]SnapshotSeriesPoint, error) {
+	var rows *sql.Rows
+	var err error
+
+	sinceStr := since.Format(time.RFC3339)
+	if since.IsZero() {
+		rows, err = s.db.QueryContext(ctx,
+			`SELECT checked_at, current_funding_rate, funding_apy_pct, earn_apy_pct, combined_apy_pct,
+			        entry_spread_pct, exit_spread_pct
+			 FROM delta_neutral_monitor_snapshots
+			 WHERE plan_id = ?
+			 ORDER BY checked_at ASC`,
+			planID,
+		)
+	} else {
+		rows, err = s.db.QueryContext(ctx,
+			`SELECT checked_at, current_funding_rate, funding_apy_pct, earn_apy_pct, combined_apy_pct,
+			        entry_spread_pct, exit_spread_pct
+			 FROM delta_neutral_monitor_snapshots
+			 WHERE plan_id = ? AND checked_at >= ?
+			 ORDER BY checked_at ASC`,
+			planID, sinceStr,
+		)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var raw []SnapshotSeriesPoint
+	for rows.Next() {
+		var p SnapshotSeriesPoint
+		var checkedAt string
+		if err := rows.Scan(&checkedAt, &p.CurrentFundingRate, &p.FundingAPYPct, &p.EarnAPYPct, &p.CombinedAPYPct, &p.EntrySpreadPct, &p.ExitSpreadPct); err != nil {
+			return nil, err
+		}
+		p.CheckedAt, _ = time.Parse(time.RFC3339, checkedAt)
+		raw = append(raw, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	if maxPoints <= 0 || len(raw) <= maxPoints {
+		return raw, nil
+	}
+
+	// Downsample: bucket into maxPoints equal-width time buckets and average.
+	return downsampleSeries(raw, maxPoints), nil
+}
+
+// downsampleSeries groups points into n evenly-spaced time buckets and returns
+// the per-bucket average of each metric, using the bucket midpoint as the
+// representative timestamp.
+func downsampleSeries(pts []SnapshotSeriesPoint, n int) []SnapshotSeriesPoint {
+	if len(pts) == 0 || n <= 0 {
+		return pts
+	}
+	first := pts[0].CheckedAt
+	last := pts[len(pts)-1].CheckedAt
+	span := last.Sub(first)
+	if span == 0 {
+		return pts[:1]
+	}
+
+	type bucket struct {
+		sumFR, sumFAPY, sumEAPY, sumCAPY float64
+		sumEntrySpread, sumExitSpread    float64
+		count                            int
+	}
+	buckets := make([]bucket, n)
+
+	for _, p := range pts {
+		idx := int(float64(p.CheckedAt.Sub(first)) / float64(span) * float64(n))
+		if idx >= n {
+			idx = n - 1
+		}
+		buckets[idx].sumFR += p.CurrentFundingRate
+		buckets[idx].sumFAPY += p.FundingAPYPct
+		buckets[idx].sumEAPY += p.EarnAPYPct
+		buckets[idx].sumCAPY += p.CombinedAPYPct
+		buckets[idx].sumEntrySpread += p.EntrySpreadPct
+		buckets[idx].sumExitSpread += p.ExitSpreadPct
+		buckets[idx].count++
+	}
+
+	bucketWidth := span / time.Duration(n)
+	out := make([]SnapshotSeriesPoint, 0, n)
+	for i, b := range buckets {
+		if b.count == 0 {
+			continue
+		}
+		midpoint := first.Add(time.Duration(i)*bucketWidth + bucketWidth/2)
+		out = append(out, SnapshotSeriesPoint{
+			CheckedAt:          midpoint,
+			CurrentFundingRate: b.sumFR / float64(b.count),
+			FundingAPYPct:      b.sumFAPY / float64(b.count),
+			EarnAPYPct:         b.sumEAPY / float64(b.count),
+			CombinedAPYPct:     b.sumCAPY / float64(b.count),
+			EntrySpreadPct:     b.sumEntrySpread / float64(b.count),
+			ExitSpreadPct:      b.sumExitSpread / float64(b.count),
+		})
+	}
+	return out
 }
 
 // SaveAlert inserts a new alert and sets alert.ID on success.
@@ -953,6 +1198,21 @@ func (s *Store) ListExecutionLegs(ctx context.Context, executionID int64) ([]Exe
 	return legs, rows.Err()
 }
 
+// SumPlanExecutionFees returns the total FeeUSDT recorded across all filled execution
+// legs for a plan. This is the plan-specific trading fee sourced directly from order
+// responses, independent of OKX's time-window or position-lifecycle fee APIs.
+func (s *Store) SumPlanExecutionFees(ctx context.Context, planID int64) (float64, error) {
+	var total float64
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COALESCE(SUM(l.fee_usdt), 0)
+		 FROM delta_neutral_execution_legs l
+		 JOIN delta_neutral_executions e ON l.execution_id = e.id
+		 WHERE e.plan_id = ? AND l.state = 'filled'`,
+		planID,
+	).Scan(&total)
+	return total, err
+}
+
 // SavePlanFeeSnapshot inserts a fee snapshot and sets snap.ID on success.
 func (s *Store) SavePlanFeeSnapshot(ctx context.Context, snap *PlanFeeSnapshot) (int64, error) {
 	var periodStart, periodEnd *string
@@ -1086,8 +1346,13 @@ func scanSnapshot(scan func(dest ...any) error) (*MonitorSnapshot, error) {
 		&s.ID, &s.PlanID, &checkedAt,
 		&s.SpotPrice, &s.SpotQuantity, &s.SpotValueUSDT,
 		&s.FuturesMarkPrice, &s.FuturesContracts, &s.FuturesNotionalUSDT, &s.FuturesUnrealizedPnLUSDT,
-		&s.CurrentFundingRate, &s.EstimatedNextFundingUSDT, &s.FundingState,
-		&s.DeltaDriftPct, &s.LiquidationPrice, &s.LiquidationDistancePct,
+		&s.CurrentFundingRate, &s.FundingAPYPct, &s.EarnAPYPct, &s.CombinedAPYPct,
+		&s.Funding90dAPYPct, &s.Funding180dAPYPct, &s.Funding365dAPYPct,
+		&s.Earn90dAPYPct, &s.Earn180dAPYPct, &s.Earn365dAPYPct,
+		&s.Combined90dAPYPct, &s.Combined180dAPYPct, &s.Combined365dAPYPct,
+		&s.EstimatedNextFundingUSDT, &s.FundingState,
+		&s.DeltaDriftPct, &s.EntrySpreadPct, &s.ExitSpreadPct,
+		&s.LiquidationPrice, &s.LiquidationDistancePct,
 		&s.MarginRatioPct, &s.MarginState,
 		&s.HealthScore, &s.HealthLabel, &crossExchangeInt,
 		&thresholdBreachedInt, &breachCodesJSON,

@@ -70,20 +70,29 @@ func okxData(res interface{}) []map[string]interface{} {
 // --- broker.EarnProvider ---
 
 // FetchFlexibleEarnProducts returns OKX earn products from two sources:
-//  1. Simple Earn Flexible / Savings (public): /api/v5/finance/savings/lending-rate-summary
+//  1. Simple Earn Flexible / Savings (public): /api/v5/finance/savings/lending-rate-history
 //  2. On-chain Earn / DeFi (requires auth): /api/v5/finance/staking-defi/offers
 //
 // asset == "" returns all currencies. APY is already a fraction (0.05 == 5%).
+// We use lending-rate-history (lendingRate field) rather than lending-rate-summary
+// (estRate) because estRate is the borrowing-demand threshold (~2x actual), while
+// lendingRate is the rate actually settled and paid to lenders — matching what
+// the OKX app displays as "past hour APR".
 func (a *OKXBrokerAdapter) FetchFlexibleEarnProducts(_ context.Context, asset string) ([]broker.EarnProduct, error) {
 	var products []broker.EarnProduct
 
 	// ── Source 1: Savings / Simple Earn Flexible (public endpoint) ────────
+	// Use lending-rate-history with limit=1 to get the most recent settled
+	// lendingRate for each currency. When asset=="", OKX returns all currencies
+	// for the latest settlement period regardless of the limit parameter.
 	_ = catchPanic(func() error {
-		params := map[string]interface{}{}
+		params := map[string]interface{}{
+			"limit": "1",
+		}
 		if asset != "" {
 			params["ccy"] = asset
 		}
-		res := <-a.publicClient.Core.PublicGetFinanceSavingsLendingRateSummary(params)
+		res := <-a.publicClient.Core.PublicGetFinanceSavingsLendingRateHistory(params)
 		if ccxt.IsError(res) {
 			return ccxt.CreateReturnError(res)
 		}
@@ -92,7 +101,7 @@ func (a *OKXBrokerAdapter) FetchFlexibleEarnProducts(_ context.Context, asset st
 				Exchange:     Name,
 				Asset:        okxString(row["ccy"]),
 				ProductID:    okxString(row["ccy"]),
-				APY:          okxFloat(row["estRate"]),
+				APY:          okxFloat(row["lendingRate"]),
 				CanSubscribe: true,
 				Type:         "savings",
 			})
@@ -358,35 +367,70 @@ func (a *OKXBrokerAdapter) SetFlexibleAutoSubscribe(_ context.Context, _ /*produ
 
 // FetchFlexibleEarnRateHistory returns historical rate data for a flexible savings currency.
 // Calls /api/v5/finance/savings/lending-rate-history (PUBLIC endpoint).
-// The response rate is already a fraction (0.05 == 5% APY). productID is ignored for OKX
-// (savings are keyed by currency). asset is required.
-func (a *OKXBrokerAdapter) FetchFlexibleEarnRateHistory(ctx context.Context, productID, asset string, since *int64, limit int) ([]broker.EarnRatePoint, error) {
+// Uses lendingRate (actual settled rate paid to lenders), not rate (borrowing threshold).
+// Already a fraction (0.05 == 5% APY). productID is ignored for OKX (keyed by currency).
+//
+// The endpoint returns HOURLY points, 100 per page (max), newest-first. To cover
+// multi-month windows it is paged backward via `after` (returns records earlier
+// than the cursor ts). When `since` is set we page until reaching it; otherwise
+// we return the most-recent `limit` points (single page when limit<=100). Results
+// are cached (broker.EarnRateHistoryTTL) since a full-year pull is ~88 requests.
+func (a *OKXBrokerAdapter) FetchFlexibleEarnRateHistory(_ context.Context, _ /*productID*/ string, asset string, since *int64, limit int) ([]broker.EarnRatePoint, error) {
+	if cached, ok := broker.EarnRateHistoryCacheGet("okx", asset, since); ok {
+		return cached, nil
+	}
 	var points []broker.EarnRatePoint
 	err := catchPanic(func() error {
-		params := map[string]interface{}{
-			"ccy":   asset,
-			"limit": "100",
-		}
-		res := <-a.publicClient.Core.PublicGetFinanceSavingsLendingRateHistory(params)
-		if ccxt.IsError(res) {
-			return ccxt.CreateReturnError(res)
-		}
-		for _, row := range okxData(res) {
-			rate := okxFloat(row["rate"])
-			timestamp := int64(okxFloat(row["ts"]))
-			points = append(points, broker.EarnRatePoint{
-				Rate:      rate,
-				Timestamp: timestamp,
-			})
-		}
-		// Cap by limit if specified (caller may pass 0 for no limit).
-		if limit > 0 && len(points) > limit {
-			points = points[:limit]
+		// Safety cap: 400 pages * 100 = 40k hourly points (~4.5y) — far past any
+		// window or OKX's retention, so the since/short-page conditions end first.
+		const pageCap = 400
+		var cursor string // OKX `after` cursor (ms); empty => latest page
+		for page := 0; page < pageCap; page++ {
+			params := map[string]interface{}{"ccy": asset, "limit": "100"}
+			if cursor != "" {
+				params["after"] = cursor
+			}
+			res := <-a.publicClient.Core.PublicGetFinanceSavingsLendingRateHistory(params)
+			if ccxt.IsError(res) {
+				return ccxt.CreateReturnError(res)
+			}
+			rows := okxData(res)
+			if len(rows) == 0 {
+				break
+			}
+			oldestTs := int64(1) << 62
+			for _, row := range rows {
+				ts := int64(okxFloat(row["ts"]))
+				if ts < oldestTs {
+					oldestTs = ts
+				}
+				points = append(points, broker.EarnRatePoint{
+					Rate:      okxFloat(row["lendingRate"]),
+					Timestamp: ts,
+				})
+			}
+			// Stop once we've paged past the requested lookback, on the final
+			// (short) page, or — for latest-N requests — once we have enough.
+			if since != nil && oldestTs <= *since {
+				break
+			}
+			if len(rows) < 100 {
+				break
+			}
+			if since == nil && limit > 0 && len(points) >= limit {
+				break
+			}
+			cursor = strconv.FormatInt(oldestTs, 10)
 		}
 		return nil
 	})
 	if err != nil {
 		return nil, fmt.Errorf("okx earn: fetch rate history: %w", err)
 	}
+	// Trim only latest-N requests; windowed (since) callers filter by timestamp.
+	if since == nil && limit > 0 && len(points) > limit {
+		points = points[:limit]
+	}
+	broker.EarnRateHistoryCacheSet("okx", asset, since, points)
 	return points, nil
 }

@@ -6,7 +6,7 @@ import (
 )
 
 // DefaultMonitorInterval is the default plan monitoring interval
-const DefaultMonitorInterval = "5m"
+const DefaultMonitorInterval = "15m"
 
 // supportedIntervals maps interval strings to time.Duration
 var supportedIntervals = map[string]time.Duration{

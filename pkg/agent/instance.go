@@ -255,6 +255,12 @@ func NewAgentInstance(
 	if cfg.Tools.IsToolEnabled("scan_delta_neutral_opportunities") {
 		toolsRegistry.Register(tools.NewScanDeltaNeutralOpportunitiesTool(cfg))
 	}
+	if cfg.Tools.IsToolEnabled(tools.NameGetDeltaNeutralSpread) {
+		toolsRegistry.Register(tools.NewGetDeltaNeutralSpreadTool(cfg))
+	}
+	if cfg.Tools.IsToolEnabled(tools.NameGetDeltaNeutralEarn) {
+		toolsRegistry.Register(tools.NewGetDeltaNeutralEarnTool(cfg))
+	}
 	if cfg.Tools.IsToolEnabled("earn_overview") {
 		toolsRegistry.Register(tools.NewEarnOverviewTool(cfg))
 	}

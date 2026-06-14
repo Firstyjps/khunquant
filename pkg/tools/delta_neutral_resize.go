@@ -400,7 +400,17 @@ func (t *ResizeDeltaNeutralPositionTool) resizeFuturesLeg(ctx context.Context, p
 	if mkt.Limits.Amount.Min != nil && *mkt.Limits.Amount.Min > 0 {
 		minAmount = *mkt.Limits.Amount.Min
 	}
-	numContracts, err := contractsFromNotional(notionalDelta, markPrice, perContractSize, minAmount)
+	// For increases, size the futures to cover NET spot after spot taker-fee deduction
+	// (fee taken from received tokens). For decreases, no adjustment: spot sells the
+	// exact ALGO count and fee comes from USDT received, not from token quantity.
+	// TODO: fetch actual spot taker fee from the user's account tier via the exchange API
+	// instead of hardcoding 0.1%. Users on higher tiers or using fee tokens (BNB/OKX) pay less.
+	const spotTakerFee = 0.001
+	hedgeNotional := notionalDelta
+	if !isDecrease {
+		hedgeNotional = notionalDelta * (1 - spotTakerFee)
+	}
+	numContracts, err := contractsFromNotional(hedgeNotional, markPrice, perContractSize, minAmount)
 	if err != nil {
 		return false, fmt.Errorf("contract count computation: %w", err)
 	}
@@ -453,7 +463,7 @@ func (t *ResizeDeltaNeutralPositionTool) resizeFuturesLeg(ctx context.Context, p
 		UpdatedAt:             time.Now(),
 	}
 
-	// Create the futures order
+	// Create the futures order — pass MarginMode so OKX sets tdMode on the order.
 	order, err := fp.CreateFuturesOrder(ctx, broker.FuturesOrderRequest{
 		Symbol:       plan.FuturesSymbol,
 		OrderType:    "market",
@@ -461,6 +471,7 @@ func (t *ResizeDeltaNeutralPositionTool) resizeFuturesLeg(ctx context.Context, p
 		Amount:       numContracts,
 		PositionSide: positionSide,
 		ReduceOnly:   reduceOnly,
+		MarginMode:   plan.FuturesMarginMode,
 	})
 	if err != nil {
 		leg.State = string(deltaneutral.LegStateFailed)
@@ -469,11 +480,38 @@ func (t *ResizeDeltaNeutralPositionTool) resizeFuturesLeg(ctx context.Context, p
 		return false, err
 	}
 
+	// Fetch order to get actual fill data and fees. Use mergeOrderFillData so the
+	// create response is not discarded wholesale (Binance carries fee in the create).
+	if oid := orderID(order); oid != "" {
+		if fetched, fetchErr := fp.FetchFuturesOrder(ctx, oid, plan.FuturesSymbol); fetchErr == nil {
+			order = mergeOrderFillData(order, fetched)
+		}
+	}
+
+	// Use actual fill data from the order; fall back to pre-fill estimates.
+	filledBase := baseQty
+	avgFill := markPrice
+	filledNotional := notionalDelta
+	if order.Filled != nil && *order.Filled > 0 {
+		filledBase = *order.Filled * perContractSize // contracts → base currency
+	}
+	if order.Average != nil && *order.Average > 0 {
+		avgFill = *order.Average
+	}
+	if order.Cost != nil && *order.Cost > 0 {
+		filledNotional = *order.Cost
+	}
+
 	leg.OrderID = orderID(order)
 	leg.State = string(deltaneutral.LegStateFilled)
-	leg.FilledQuantity = baseQty
-	leg.FilledNotionalUSDT = notionalDelta
-	leg.AvgFillPrice = markPrice
+	leg.FilledQuantity = filledBase
+	leg.FilledNotionalUSDT = filledNotional
+	leg.AvgFillPrice = avgFill
+
+	// Futures fees are USDT-settled on both OKX and Binance.
+	if order.Fee.Cost != nil && *order.Fee.Cost > 0 {
+		leg.FeeUSDT = -(*order.Fee.Cost) // negative = cost
+	}
 
 	_, err = t.store.SaveExecutionLeg(ctx, leg)
 	return err == nil, err
@@ -553,11 +591,38 @@ func (t *ResizeDeltaNeutralPositionTool) resizeSpotLeg(ctx context.Context, plan
 		return false, err
 	}
 
+	// Fetch order to get actual fill data and fees. Use mergeOrderFillData so the
+	// create response is not discarded wholesale (Binance carries fee in the create).
+	if oid := orderID(order); oid != "" {
+		if fetched, fetchErr := tp.FetchOrder(ctx, oid, plan.SpotSymbol); fetchErr == nil {
+			order = mergeOrderFillData(order, fetched)
+		}
+	}
+
+	// Use actual fill data from the order; fall back to pre-fill estimates.
+	filledQty := quantity
+	avgFill := price
+	filledNotional := notionalDelta
+	if order.Filled != nil && *order.Filled > 0 {
+		filledQty = *order.Filled
+	}
+	if order.Average != nil && *order.Average > 0 {
+		avgFill = *order.Average
+	}
+	if order.Cost != nil && *order.Cost > 0 {
+		filledNotional = *order.Cost
+	}
+
 	leg.OrderID = orderID(order)
 	leg.State = string(deltaneutral.LegStateFilled)
-	leg.FilledQuantity = quantity
-	leg.FilledNotionalUSDT = notionalDelta
-	leg.AvgFillPrice = price
+	leg.FilledQuantity = filledQty
+	leg.FilledNotionalUSDT = filledNotional
+	leg.AvgFillPrice = avgFill
+
+	// Spot fee: side-aware (buy fee is in base currency; sell fee is in USDT).
+	if fee := spotFeeCostUSDT(order, side, avgFill); fee > 0 {
+		leg.FeeUSDT = -fee // negative = cost
+	}
 
 	_, err = t.store.SaveExecutionLeg(ctx, leg)
 	return err == nil, err

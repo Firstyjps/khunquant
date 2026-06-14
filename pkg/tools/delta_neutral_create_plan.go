@@ -77,10 +77,35 @@ func (t *CreateDeltaNeutralPlanTool) Parameters() map[string]any {
 				"type":        "integer",
 				"description": "Futures leverage (e.g. 2, 5, 10). Default 1. The plan will set this at activation.",
 			},
+			"futures_margin_mode": map[string]any{
+				"type":        "string",
+				"enum":        []string{"cross", "isolated"},
+				"description": "Margin mode for the futures leg. 'cross' (default) shares wallet margin — a liquidation draws from the whole account. 'isolated' caps the risk to the margin posted on this position only — strongly recommended for leverage > 2x to protect other positions.",
+			},
 			"monitor_interval": map[string]any{
 				"type":        "string",
 				"enum":        []string{"30s", "1m", "3m", "5m", "10m", "15m", "30m", "1h", "2h", "3h", "4h", "8h", "1d"},
-				"description": "How often to evaluate plan health. Default '5m'. Sub-minute intervals (30s, 1m) may trigger rate-limit warnings.",
+				"description": "How often to evaluate plan health. Default '15m'. Sub-minute intervals (30s, 1m) may trigger rate-limit warnings.",
+			},
+			"entry_rules": map[string]any{
+				"type":        "object",
+				"description": "Optional entry rules (minimum spread gate). Omit to use defaults.",
+				"properties": map[string]any{
+					"min_entry_spread_pct": map[string]any{
+						"type":        "number",
+						"description": "Minimum entry spread (%) required to open the position. Entry spread = (futures_price - spot_price) / spot_price * 100. Negative = futures below spot (most common). 0 = disabled. Example: -0.1 means only enter when spread is at/above -0.1%.",
+					},
+				},
+			},
+			"exit_rules": map[string]any{
+				"type":        "object",
+				"description": "Optional exit rules (target spread for closing). Omit to use defaults.",
+				"properties": map[string]any{
+					"target_exit_spread_pct": map[string]any{
+						"type":        "number",
+						"description": "Target exit spread (%) that triggers an unwind recommendation. Exit spread = (spot_price - futures_price) / futures_price * 100. Positive = spot above futures (favorable exit). 0 = disabled. Example: 0.1 means consider closing when exit spread reaches 0.1%.",
+					},
+				},
 			},
 			"risk_policy": map[string]any{
 				"type":        "object",
@@ -156,6 +181,10 @@ func (t *CreateDeltaNeutralPlanTool) Execute(ctx context.Context, args map[strin
 	capitalUSDT, _ := args["capital_usdt"].(float64)
 	leverageFloat, _ := args["leverage"].(float64)
 	monitorInterval, _ := args["monitor_interval"].(string)
+	futuresMarginMode, _ := args["futures_margin_mode"].(string)
+	if futuresMarginMode == "" {
+		futuresMarginMode = "cross"
+	}
 
 	// Validation
 	if planName == "" || asset == "" || spotProvider == "" || spotSymbol == "" || futuresProvider == "" || futuresSymbol == "" {
@@ -216,6 +245,22 @@ func (t *CreateDeltaNeutralPlanTool) Execute(ctx context.Context, args map[strin
 		}
 	}
 
+	// Entry rules (use zero values / disabled if not provided)
+	entryRules := deltaneutral.EntryRules{}
+	if entryRulesMap, ok := args["entry_rules"].(map[string]any); ok {
+		if v, ok := entryRulesMap["min_entry_spread_pct"].(float64); ok {
+			entryRules.MinEntrySpreadPct = v
+		}
+	}
+
+	// Exit rules (use zero values / disabled if not provided)
+	exitRules := deltaneutral.ExitRules{}
+	if exitRulesMap, ok := args["exit_rules"].(map[string]any); ok {
+		if v, ok := exitRulesMap["target_exit_spread_pct"].(float64); ok {
+			exitRules.TargetExitSpreadPct = v
+		}
+	}
+
 	// Notification routing
 	notifyChannel := ToolChannel(ctx)
 	notifyChatID := ToolChatID(ctx)
@@ -229,7 +274,7 @@ func (t *CreateDeltaNeutralPlanTool) Execute(ctx context.Context, args map[strin
 	}
 
 	// Determine if cross-exchange
-	crossExchange := strings.ToLower(spotProvider) != strings.ToLower(futuresProvider)
+	crossExchange := !strings.EqualFold(spotProvider, futuresProvider)
 
 	// Validate leverage against max_leverage
 	if riskPolicy.MaxLeverage > 0 && leverage > riskPolicy.MaxLeverage {
@@ -267,7 +312,7 @@ func (t *CreateDeltaNeutralPlanTool) Execute(ctx context.Context, args map[strin
 		FuturesAccount:      futuresAccount,
 		FuturesSymbol:       futuresSymbol,
 		FuturesSide:         "short",
-		FuturesMarginMode:   "cross",
+		FuturesMarginMode:   futuresMarginMode,
 		FuturesLeverage:     leverage,
 		CapitalUSDT:         capitalUSDT,
 		SpotNotionalUSDT:    spotNotional,
@@ -275,6 +320,8 @@ func (t *CreateDeltaNeutralPlanTool) Execute(ctx context.Context, args map[strin
 		ReserveMarginUSDT:   reserve,
 		MonitorInterval:     monitorInterval,
 		Enabled:             true,
+		EntryRules:          entryRules,
+		ExitRules:           exitRules,
 		RiskPolicy:          riskPolicy,
 		CrossExchange:       crossExchange,
 		NotifyChannel:       notifyChannel,
@@ -333,7 +380,7 @@ func (t *CreateDeltaNeutralPlanTool) Execute(ctx context.Context, args map[strin
 	out += fmt.Sprintf("  Futures notional:%.2f USDT\n", futuresNotional)
 	out += fmt.Sprintf("  Reserve margin:  %.2f USDT\n", reserve)
 	out += fmt.Sprintf("  Monitor interval:%s\n", monitorInterval)
-	out += fmt.Sprintf("  Status:          draft (ready for activation)\n")
+	out += "  Status:          draft (ready for activation)\n"
 	out += fmt.Sprintf("  Cron job ID:     %s\n", job.ID)
 
 	if crossExchange {

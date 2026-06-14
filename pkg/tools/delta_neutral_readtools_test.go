@@ -102,7 +102,7 @@ func TestGetDeltaNeutralPlanTool(t *testing.T) {
 	seedDNSnapshot(t, store, id, true)
 	seedDNAlert(t, store, id)
 
-	tool := NewGetDeltaNeutralPlanTool(store)
+	tool := NewGetDeltaNeutralPlanTool(nil, store)
 	if tool.Name() != NameGetDeltaNeutralPlan {
 		t.Fatalf("unexpected name %q", tool.Name())
 	}
@@ -132,7 +132,7 @@ func TestGetDeltaNeutralPlanTool_NoSnapshot(t *testing.T) {
 	defer store.Close()
 	id := seedDNPlan(t, store, "no-snap", "ready")
 
-	res := NewGetDeltaNeutralPlanTool(store).Execute(context.Background(), map[string]any{"plan_id": float64(id)})
+	res := NewGetDeltaNeutralPlanTool(nil, store).Execute(context.Background(), map[string]any{"plan_id": float64(id)})
 	if res.IsError {
 		t.Fatalf("unexpected error: %v", res.ForLLM)
 	}
@@ -179,7 +179,7 @@ func TestGetDeltaNeutralSummaryTool_Errors(t *testing.T) {
 	id := seedDNPlan(t, store, "summary-test", "active")
 	seedDNSnapshot(t, store, id, false)
 
-	tool := NewGetDeltaNeutralSummaryTool(store)
+	tool := NewGetDeltaNeutralSummaryTool(nil, store)
 	if tool.Name() != NameGetDeltaNeutralSummary {
 		t.Fatalf("unexpected name %q", tool.Name())
 	}

@@ -82,7 +82,7 @@ func (t *ListDeltaNeutralPlansTool) Execute(ctx context.Context, args map[string
 		sb.WriteString(fmt.Sprintf("      Capital:          %.2f USDT\n", p.CapitalUSDT))
 		sb.WriteString(fmt.Sprintf("      Monitor interval: %s\n", p.MonitorInterval))
 		if p.CrossExchange {
-			sb.WriteString(fmt.Sprintf("      ⚠️  Cross-exchange (spot and futures on different exchanges)\n"))
+			sb.WriteString("      ⚠️  Cross-exchange (spot and futures on different exchanges)\n")
 		}
 		sb.WriteString("\n")
 	}

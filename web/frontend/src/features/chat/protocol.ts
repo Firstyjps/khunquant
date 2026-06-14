@@ -91,6 +91,32 @@ export function handlePicoMessage(
       updateChatStore({ isTyping: false })
       break
 
+    case "media.create": {
+      const dataUri = (payload.data as string) || ""
+      const caption = (payload.caption as string) || ""
+      const filename = (payload.filename as string) || ""
+      if (!dataUri) break
+
+      updateChatStore((prev) => ({
+        messages: [
+          ...prev.messages,
+          {
+            id: `media-${Date.now()}`,
+            role: "assistant",
+            content: caption,
+            timestamp: message.timestamp !== undefined && Number.isFinite(Number(message.timestamp))
+              ? normalizeUnixTimestamp(Number(message.timestamp))
+              : Date.now(),
+            imageDataUri: dataUri,
+            imageCaption: caption,
+            imageFilename: filename,
+          },
+        ],
+        isTyping: false,
+      }))
+      break
+    }
+
     case "error":
       console.error("Pico error:", payload)
       updateChatStore({ isTyping: false })

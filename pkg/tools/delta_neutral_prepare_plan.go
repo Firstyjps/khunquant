@@ -119,10 +119,11 @@ func (t *PrepareDeltaNeutralPlanTool) Execute(ctx context.Context, args map[stri
 		plan.MonitorInterval,
 		deltaneutral.ValidInterval(plan.MonitorInterval))
 
-	// 11. Margin mode non-empty
+	// 11. Margin mode non-empty and valid
+	marginModeOK := plan.FuturesMarginMode == "cross" || plan.FuturesMarginMode == "isolated"
 	check("Margin mode",
-		plan.FuturesMarginMode,
-		plan.FuturesMarginMode != "")
+		fmt.Sprintf("%s (use update_delta_neutral_plan to change)", plan.FuturesMarginMode),
+		marginModeOK)
 
 	// Build report
 	var out strings.Builder
@@ -138,9 +139,13 @@ func (t *PrepareDeltaNeutralPlanTool) Execute(ctx context.Context, args map[stri
 		return ErrorResult(out.String())
 	}
 
-	// Promote to ready
-	if err := t.store.UpdatePlanStatus(ctx, plan.ID, deltaneutral.PlanStatusReady); err != nil {
-		return ErrorResult(fmt.Sprintf("validation passed but failed to update plan status: %v", err))
+	// Compute and persist cost estimates (entry/exit fees; funding/breakeven need a snapshot).
+	costs := estimateCosts(*plan, nil)
+	plan.EstimatedEntryCostUSDT = costs.EntryCostUSDT
+	plan.EstimatedExitCostUSDT = costs.ExitCostUSDT
+	plan.Status = deltaneutral.PlanStatusReady
+	if err := t.store.UpdatePlan(ctx, plan); err != nil {
+		return ErrorResult(fmt.Sprintf("validation passed but failed to update plan: %v", err))
 	}
 
 	fmt.Fprintf(&out, "ready ✓\n\n")
@@ -150,6 +155,14 @@ func (t *PrepareDeltaNeutralPlanTool) Execute(ctx context.Context, args map[stri
 	if plan.CrossExchange {
 		out.WriteString("\n\n⚠  Cross-exchange plan: spot and futures on different exchanges.\n")
 		out.WriteString("   Transfer timing and counterparty risk are your responsibility.")
+	}
+
+	if plan.FuturesMarginMode == "cross" && plan.FuturesLeverage > 2 {
+		out.WriteString("\n\n⚠  Margin mode warning: futures leg is using CROSS margin at leverage " +
+			fmt.Sprintf("%dx", plan.FuturesLeverage) + ".\n")
+		out.WriteString("   Cross margin means a liquidation on this position can draw from your entire futures wallet,\n")
+		out.WriteString("   putting other open positions at risk. Consider switching to ISOLATED margin:\n")
+		out.WriteString("   update_delta_neutral_plan(plan_id=" + fmt.Sprintf("%d", plan.ID) + ", futures_margin_mode=\"isolated\")")
 	}
 
 	out.WriteString("\n\nPlan is now ready. Call open_delta_neutral_position to execute.\n")

@@ -10,6 +10,9 @@ export interface ChatMessage {
   role: "user" | "assistant"
   content: string
   timestamp: number | string
+  imageDataUri?: string  // set when the message is a media.create delivery
+  imageCaption?: string
+  imageFilename?: string
 }
 
 export interface ContextUsage {

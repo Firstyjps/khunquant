@@ -240,6 +240,9 @@ func (a *BinanceBrokerAdapter) SetFuturesLeverage(_ context.Context, symbol stri
 	if positionSide != "" {
 		params["positionSide"] = strings.ToUpper(positionSide)
 	}
+	logger.DebugCF("binance-leverage", "SetFuturesLeverage request", map[string]any{
+		"symbol": symbol, "leverage": leverage, "marginMode": marginMode, "positionSide": positionSide,
+	})
 	if marginMode != "" {
 		// Binance requires margin mode to be changed with a separate endpoint.
 		marginErr := catchPanic(func() error {
@@ -247,6 +250,9 @@ func (a *BinanceBrokerAdapter) SetFuturesLeverage(_ context.Context, symbol stri
 			return err
 		})
 		if marginErr != nil && !strings.Contains(strings.ToLower(marginErr.Error()), "no need to change margin type") {
+			logger.WarnCF("binance-leverage", "SetMarginMode failed", map[string]any{
+				"symbol": symbol, "marginMode": marginMode, "error": marginErr.Error(),
+			})
 			return nil, fmt.Errorf("binance futures: set margin mode: %w", marginErr)
 		}
 	}
@@ -263,7 +269,15 @@ func (a *BinanceBrokerAdapter) SetFuturesLeverage(_ context.Context, symbol stri
 		return nil
 	})
 	if err != nil {
+		logger.WarnCF("binance-leverage", "SetFuturesLeverage failed", map[string]any{
+			"symbol": symbol, "leverage": leverage, "error": err.Error(),
+		})
 		return nil, fmt.Errorf("binance futures: set leverage: %w", err)
+	}
+	if len(out) > 0 {
+		logger.InfoCF("binance-leverage", "SetFuturesLeverage response", map[string]any{
+			"symbol": symbol, "response": out,
+		})
 	}
 	return out, nil
 }
@@ -359,18 +373,53 @@ func (a *BinanceBrokerAdapter) FetchFuturesFundingHistory(_ context.Context, sym
 	return
 }
 
+// FetchPublicFundingRateHistory returns funding-rate history, paging backward when
+// limit>1000 (Binance serves max 1000/request). ccxt's built-in `paginate` is not
+// wired for this method in ccxt-go (panics "method not found"), so we page manually
+// via the unified `until` param (endTime), which Binance honours.
 func (a *BinanceBrokerAdapter) FetchPublicFundingRateHistory(_ context.Context, symbol string, since *int64, limit int) (history []ccxt.FundingRateHistory, err error) {
-	opts := []ccxt.FetchFundingRateHistoryOptions{}
-	if symbol != "" {
-		opts = append(opts, ccxt.WithFetchFundingRateHistorySymbol(symbol))
+	if limit <= 0 {
+		limit = 100
 	}
-	if since != nil {
-		opts = append(opts, ccxt.WithFetchFundingRateHistorySince(*since))
-	}
-	if limit > 0 {
-		opts = append(opts, ccxt.WithFetchFundingRateHistoryLimit(int64(limit)))
-	}
-	err = catchPanic(func() error { history, err = a.usdm.FetchFundingRateHistory(opts...); return err })
+	const perCall = 1000
+	err = catchPanic(func() error {
+		var until int64 // Binance `until` (ms, exclusive endTime); 0 => latest page
+		for len(history) < limit {
+			opts := []ccxt.FetchFundingRateHistoryOptions{}
+			if symbol != "" {
+				opts = append(opts, ccxt.WithFetchFundingRateHistorySymbol(symbol))
+			}
+			opts = append(opts, ccxt.WithFetchFundingRateHistoryLimit(perCall))
+			switch {
+			case until > 0:
+				opts = append(opts, ccxt.WithFetchFundingRateHistoryParams(map[string]any{"until": until}))
+			case since != nil:
+				opts = append(opts, ccxt.WithFetchFundingRateHistorySince(*since))
+			}
+			page, e := a.usdm.FetchFundingRateHistory(opts...)
+			if e != nil {
+				return e
+			}
+			if len(page) == 0 {
+				break
+			}
+			history = append(history, page...)
+			if len(page) < perCall {
+				break // reached the end of available history
+			}
+			oldest := int64(1) << 62
+			for _, r := range page {
+				if r.Timestamp != nil && *r.Timestamp < oldest {
+					oldest = *r.Timestamp
+				}
+			}
+			if oldest == int64(1)<<62 || oldest-1 == until {
+				break
+			}
+			until = oldest - 1
+		}
+		return nil
+	})
 	return
 }
 
