@@ -100,6 +100,14 @@ Use `futuresPositionSide(positionSide string)` in `pkg/tools/futures.go` which m
 
 The `posSide` / `PositionSide` field in the order request is separate and correctly takes `"long"` / `"short"`.
 
+## Before committing / opening a PR
+
+- Run `make check` (deps + fmt + vet + test) and make sure it passes — this mirrors what CI enforces.
+- CI runs on every PR via `.github/workflows/pr.yml` (plus `build.yml`, `nightly.yml`, `docker-build.yml`, `release.yml`). A red `make check` locally will fail CI.
+- Branch off `main`; don't push directly to `main` for non-trivial changes.
+- `pkg/providers/` and `pkg/channels/` expose common interfaces that many implementations depend on — changing an interface signature ripples across ~40 provider dirs and every channel adapter. Change deliberately.
+- Never commit real API keys / channel tokens — use `.env` (see `.env.example`).
+
 ## Dependencies
 
 Key direct dependencies: `github.com/anthropics/anthropic-sdk-go`, `github.com/openai/openai-go`, `github.com/spf13/cobra`, `github.com/rs/zerolog`, `github.com/modelcontextprotocol/go-sdk`, `modernc.org/sqlite`, `github.com/gorilla/websocket`, plus platform-specific SDKs for each chat channel.
