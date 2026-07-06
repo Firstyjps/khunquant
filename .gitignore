@@ -12,6 +12,9 @@ build/
 /khunquant-test
 cmd/**/workspace
 .claude/
+
+# Graphify knowledge-graph output (local, regenerable via `graphify update .`)
+graphify-out/
 # Khunquant specific
 
 # KhunQuant
