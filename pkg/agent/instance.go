@@ -67,6 +67,15 @@ type AgentInstance struct {
 	// from model_list, instead of inheriting the primary model's provider config.
 	CandidateProviders map[string]providers.LLMProvider
 
+	// ImageModel routing: when an incoming turn's context carries image media and
+	// ImageCandidates is non-empty, the turn is routed to a vision-capable model
+	// instead of the (possibly text-only) main model. This prevents image_url
+	// payloads from reaching text-only providers, which reject them with HTTP 400.
+	// Pre-resolved at agent creation to avoid model_list lookups per message.
+	ImageModel      string
+	ImageCandidates []providers.FallbackCandidate
+	ImageProvider   providers.LLMProvider
+
 	// FollowUpNudge injects a steering message when the LLM returns a text-only
 	// response on the first iteration, giving it one more chance to call a tool.
 	FollowUpNudge bool
@@ -386,6 +395,35 @@ func NewAgentInstance(
 		}
 	}
 
+	// Image model setup: pre-resolve vision model candidates so image-bearing
+	// turns can be routed to a vision-capable model (mirrors the light-model path).
+	var imageCandidates []providers.FallbackCandidate
+	var imageProvider providers.LLMProvider
+	if defaults.ImageModel != "" {
+		resolved := resolveModelCandidates(cfg, defaults.Provider, defaults.ImageModel, defaults.ImageModelFallbacks)
+		if len(resolved) > 0 {
+			imageModelCfg, err := resolvedModelConfig(cfg, defaults.ImageModel, workspace)
+			if err != nil {
+				logger.WarnCF("agent", "Image model config invalid; vision routing disabled",
+					map[string]any{"image_model": defaults.ImageModel, "agent_id": agentID, "error": err.Error()})
+			} else {
+				ip, _, err := providers.CreateProviderFromConfig(imageModelCfg)
+				if err != nil {
+					logger.WarnCF("agent", "Image model provider init failed; vision routing disabled",
+						map[string]any{"image_model": defaults.ImageModel, "agent_id": agentID, "error": err.Error()})
+				} else {
+					imageCandidates = resolved
+					imageProvider = ip
+					names := append([]string{defaults.ImageModel}, defaults.ImageModelFallbacks...)
+					populateCandidateProvidersFromNames(cfg, workspace, names, candidateProviders)
+				}
+			}
+		} else {
+			logger.WarnCF("agent", "Image model not found; vision routing disabled",
+				map[string]any{"image_model": defaults.ImageModel, "agent_id": agentID})
+		}
+	}
+
 	return &AgentInstance{
 		snapshotStore:             snapshotStore,
 		ID:                        agentID,
@@ -411,6 +449,9 @@ func NewAgentInstance(
 		LightCandidates:           lightCandidates,
 		LightProvider:             lightProvider,
 		CandidateProviders:        candidateProviders,
+		ImageModel:                defaults.ImageModel,
+		ImageCandidates:           imageCandidates,
+		ImageProvider:             imageProvider,
 		FollowUpNudge:             defaults.FollowUpNudge,
 	}
 }

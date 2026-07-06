@@ -1372,10 +1372,27 @@ func (al *AgentLoop) runLLMIteration(
 	// selectCandidates evaluates routing once and the decision is sticky for
 	// all tool-follow-up iterations within the same turn so that a multi-step
 	// tool chain doesn't switch models mid-way through.
-	activeCandidates, activeModel, usedLight := al.selectCandidates(agent, opts.UserMessage, messages)
+	var activeCandidates []providers.FallbackCandidate
+	var activeModel string
 	activeProvider := agent.Provider
-	if usedLight && agent.LightProvider != nil {
-		activeProvider = agent.LightProvider
+	// Vision routing: if the context carries image media and a vision model is
+	// configured, route this turn to it so image_url payloads never reach a
+	// text-only main model (which would reject them with HTTP 400). Takes
+	// priority over light/primary routing for the whole turn.
+	if len(agent.ImageCandidates) > 0 && messagesHaveImages(messages) {
+		activeCandidates = agent.ImageCandidates
+		activeModel = resolvedCandidateModel(agent.ImageCandidates, agent.ImageModel)
+		if agent.ImageProvider != nil {
+			activeProvider = agent.ImageProvider
+		}
+		logger.InfoCF("agent", "Vision routing: image detected, using image model",
+			map[string]any{"agent_id": agent.ID, "image_model": activeModel})
+	} else {
+		var usedLight bool
+		activeCandidates, activeModel, usedLight = al.selectCandidates(agent, opts.UserMessage, messages)
+		if usedLight && agent.LightProvider != nil {
+			activeProvider = agent.LightProvider
+		}
 	}
 
 	for iteration < agent.MaxIterations {
@@ -1976,6 +1993,19 @@ func (al *AgentLoop) runLLMIteration(
 // The returned (candidates, model) pair is used for all LLM calls within one
 // turn — tool follow-up iterations use the same tier as the initial call so
 // that a multi-step tool chain doesn't switch models mid-way.
+// messagesHaveImages reports whether any message in the context carries image
+// media. Vision routing uses this to decide whether a turn must run on a
+// vision-capable model so that image_url payloads never reach a text-only
+// provider (which rejects them with HTTP 400).
+func messagesHaveImages(messages []providers.Message) bool {
+	for i := range messages {
+		if len(messages[i].Media) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 func (al *AgentLoop) selectCandidates(
 	agent *AgentInstance,
 	userMsg string,
