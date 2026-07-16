@@ -371,8 +371,21 @@ func TestClassifyError_ImageSizeError(t *testing.T) {
 func TestClassifyError_UnknownError(t *testing.T) {
 	err := errors.New("some completely random error")
 	result := ClassifyError(err, "openai", "gpt-4")
-	if result != nil {
-		t.Errorf("expected nil for unknown error, got %+v", result)
+	if result == nil {
+		t.Fatal("expected FailoverUnknown for unknown error, got nil")
+	}
+	if result.Reason != FailoverUnknown {
+		t.Errorf("reason = %q, want %q", result.Reason, FailoverUnknown)
+	}
+	if !result.IsRetriable() {
+		t.Error("unknown errors must be retriable so the fallback chain can continue")
+	}
+}
+
+func TestClassifyError_WrappedCanceled(t *testing.T) {
+	err := fmt.Errorf("request aborted: %w", context.Canceled)
+	if result := ClassifyError(err, "openai", "gpt-4"); result != nil {
+		t.Errorf("expected nil for wrapped context.Canceled, got %+v", result)
 	}
 }
 

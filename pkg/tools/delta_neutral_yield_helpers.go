@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 
+	ccxt "github.com/ccxt/ccxt/go/v4"
+
 	"github.com/cryptoquantumwave/khunquant/pkg/config"
 	"github.com/cryptoquantumwave/khunquant/pkg/deltaneutral"
 	"github.com/cryptoquantumwave/khunquant/pkg/providers/broker"
@@ -160,6 +162,21 @@ type LiveProjection struct {
 	Warnings       []string
 }
 
+// fundingHistorySpan returns the elapsed time between the oldest record in the
+// fetched funding history and now. Used to detect exchange-side history caps.
+func fundingHistorySpan(history []ccxt.FundingRateHistory) time.Duration {
+	var oldest int64
+	for _, r := range history {
+		if r.Timestamp != nil && (oldest == 0 || *r.Timestamp < oldest) {
+			oldest = *r.Timestamp
+		}
+	}
+	if oldest == 0 {
+		return 0
+	}
+	return time.Since(time.UnixMilli(oldest))
+}
+
 // FetchLiveProjection fetches the current funding rate and earn APY for a plan's
 // symbols and computes projected annual yield and breakeven using the plan notionals.
 // Returns a non-nil projection with partial data even when some fetches fail
@@ -208,6 +225,31 @@ func FetchLiveProjection(ctx context.Context, cfg *config.Config, plan deltaneut
 				proj.Funding365dRateRaw = w365.mean
 				proj.Funding365dAPYPct = deltaneutral.AnnualizeFundingRatePct(w365.mean, &proj.FundingInterval)
 				proj.Funding365dCount = w365.count
+			}
+
+			// Exchange history caps (e.g. OKX public funding history only goes
+			// back ~3 months): a window longer than the fetched span silently
+			// collapses to the same records as the shorter windows. Flag it so
+			// 6M/12M numbers are not read as true long-horizon averages.
+			span := fundingHistorySpan(history)
+			var capped []string
+			for _, w := range []struct {
+				label string
+				dur   time.Duration
+				count int
+			}{
+				{"3M", 90 * 24 * time.Hour, w90.count},
+				{"6M", 180 * 24 * time.Hour, w180.count},
+				{"12M", 365 * 24 * time.Hour, w365.count},
+			} {
+				if w.count > 0 && span > 0 && span < w.dur*9/10 {
+					capped = append(capped, w.label)
+				}
+			}
+			if len(capped) > 0 {
+				proj.Warnings = append(proj.Warnings, fmt.Sprintf(
+					"funding history only spans ~%dd (exchange history cap) — %s stats are averages over that shorter span, not the full window",
+					int(span.Hours()/24), strings.Join(capped, "/")))
 			}
 		}
 	}
@@ -413,7 +455,7 @@ func FormatLiveProjection(p *LiveProjection) string {
 	}
 
 	if len(p.Warnings) > 0 {
-		sb.WriteString("\n  ⚠ Partial data (some fetches failed):\n")
+		sb.WriteString("\n  ⚠ Data caveats:\n")
 		for _, w := range p.Warnings {
 			sb.WriteString(fmt.Sprintf("    - %s\n", w))
 		}

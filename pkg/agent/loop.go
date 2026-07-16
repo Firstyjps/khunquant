@@ -137,6 +137,28 @@ func NewAgentLoop(
 	return al
 }
 
+// ingestToContextManager mirrors a freshly persisted session message into the
+// context manager's own store (seahorse SQLite FTS). Sessions are only
+// bootstrapped from JSONL at startup, so without this, messages from the
+// current run are invisible to short_grep/short_expand until the next restart.
+// Every message persisted to the session must be mirrored (including tool-call
+// and tool-result messages) so the next startup bootstrap sees DB == JSONL and
+// no-ops instead of rebuilding. Best-effort: an index failure never fails the turn.
+func (al *AgentLoop) ingestToContextManager(ctx context.Context, sessionKey string, msg providers.Message) {
+	if al.contextManager == nil {
+		return
+	}
+	if err := al.contextManager.Ingest(ctx, &IngestRequest{
+		SessionKey: sessionKey,
+		Message:    msg,
+	}); err != nil {
+		logger.DebugCF("agent", "context-manager ingest failed", map[string]any{
+			"session": sessionKey,
+			"error":   err.Error(),
+		})
+	}
+}
+
 // resolveContextManager constructs the ContextManager for this AgentLoop from config.
 // Falls back to "legacy" if no context_manager is configured or the named one fails.
 func (al *AgentLoop) resolveContextManager() ContextManager {
@@ -1088,8 +1110,11 @@ func (al *AgentLoop) runAgentLoop(
 			depth:                0,
 			session:              agent.Sessions,
 			initialHistoryLength: len(agent.Sessions.GetHistory("")), // Snapshot for rollback on hard abort
-			pendingResults:       make(chan *tools.ToolResult, 16),
-			concurrencySem:       make(chan struct{}, maxConcurrentSubTurns), // maxConcurrentSubTurns
+			// Sized above maxConcurrentSubTurns headroom; a full channel no longer
+			// loses results (senders block until parent finish, then republish),
+			// but a larger buffer keeps async sub-turn senders from stalling.
+			pendingResults: make(chan *tools.ToolResult, 64),
+			concurrencySem: make(chan struct{}, maxConcurrentSubTurns), // maxConcurrentSubTurns
 		}
 		ctx = withTurnState(ctx, rootTS)
 		ctx = WithAgentLoop(ctx, al) // Inject AgentLoop for tool access
@@ -1160,6 +1185,7 @@ func (al *AgentLoop) runAgentLoop(
 	// 2. Save user message to session
 	if !opts.SkipAddUserMessage && opts.UserMessage != "" {
 		agent.Sessions.AddMessage(opts.SessionKey, "user", opts.UserMessage)
+		al.ingestToContextManager(ctx, opts.SessionKey, providers.Message{Role: "user", Content: opts.UserMessage})
 	}
 
 	// 3. Run LLM iteration loop
@@ -1222,6 +1248,7 @@ func (al *AgentLoop) runAgentLoop(
 
 	// 5. Save final assistant message to session
 	agent.Sessions.AddMessage(opts.SessionKey, "assistant", finalContent)
+	al.ingestToContextManager(ctx, opts.SessionKey, providers.Message{Role: "assistant", Content: finalContent})
 	agent.Sessions.Save(opts.SessionKey)
 
 	// 6. Optional: summarization
@@ -1431,6 +1458,7 @@ func (al *AgentLoop) runLLMIteration(
 			for _, pm := range pendingMessages {
 				messages = append(messages, pm)
 				agent.Sessions.AddMessage(opts.SessionKey, pm.Role, pm.Content)
+				al.ingestToContextManager(ctx, opts.SessionKey, providers.Message{Role: pm.Role, Content: pm.Content})
 				logger.InfoCF("agent", "Injected steering message into context",
 					map[string]any{
 						"agent_id":    agent.ID,
@@ -1800,6 +1828,7 @@ func (al *AgentLoop) runLLMIteration(
 
 		// Save assistant message with tool calls to session
 		agent.Sessions.AddFullMessage(opts.SessionKey, assistantMsg)
+		al.ingestToContextManager(ctx, opts.SessionKey, assistantMsg)
 
 		// Execute tool calls in parallel
 		type indexedAgentResult struct {
@@ -1951,6 +1980,7 @@ func (al *AgentLoop) runLLMIteration(
 
 			// Save tool result message to session
 			agent.Sessions.AddFullMessage(opts.SessionKey, toolResultMsg)
+			al.ingestToContextManager(ctx, opts.SessionKey, toolResultMsg)
 		}
 
 		if allResponsesHandled {
@@ -1960,6 +1990,7 @@ func (al *AgentLoop) runLLMIteration(
 			}
 			messages = append(messages, summaryMsg)
 			agent.Sessions.AddFullMessage(opts.SessionKey, summaryMsg)
+			al.ingestToContextManager(ctx, opts.SessionKey, summaryMsg)
 
 			logger.InfoCF("agent", "Tool output satisfied delivery; ending turn without follow-up LLM",
 				map[string]any{

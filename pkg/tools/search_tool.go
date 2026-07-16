@@ -78,7 +78,8 @@ type BM25SearchTool struct {
 	maxSearchResults int
 
 	// Cache: rebuilt only when the registry version changes.
-	cacheMu      sync.Mutex
+	// cacheMu guards BOTH fields — including reads (go test -race).
+	cacheMu      sync.RWMutex
 	cachedEngine *bm25CachedEngine
 	cacheVersion uint64
 }
@@ -247,10 +248,15 @@ func buildBM25Engine(docs []searchDoc) *utils.BM25Engine[searchDoc] {
 // getOrBuildEngine returns a cached BM25 engine, rebuilding it only when
 // the registry version has changed (new tools registered).
 func (t *BM25SearchTool) getOrBuildEngine() *bm25CachedEngine {
-	// Fast path: optimistic check without locking.
+	// Fast path: read-locked check (an unlocked read here races with the
+	// rebuild below — caught by go test -race).
+	t.cacheMu.RLock()
 	if t.cachedEngine != nil && t.cacheVersion == t.registry.Version() {
-		return t.cachedEngine
+		engine := t.cachedEngine
+		t.cacheMu.RUnlock()
+		return engine
 	}
+	t.cacheMu.RUnlock()
 
 	t.cacheMu.Lock()
 	defer t.cacheMu.Unlock()

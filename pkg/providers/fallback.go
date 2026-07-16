@@ -163,14 +163,15 @@ func (fc *FallbackChain) Execute(
 		failErr := ClassifyError(err, candidate.Provider, candidate.Model)
 
 		if failErr == nil {
-			// Unclassifiable error: do not fallback, return immediately.
+			// nil only means user abort (context.Canceled): never fallback.
+			// Everything else classifies as at least FailoverUnknown (retriable).
 			result.Attempts = append(result.Attempts, FallbackAttempt{
 				Provider: candidate.Provider,
 				Model:    candidate.Model,
 				Error:    err,
 				Duration: elapsed,
 			})
-			return nil, fmt.Errorf("fallback: unclassified error from %s/%s: %w",
+			return nil, fmt.Errorf("fallback: aborted (canceled) from %s/%s: %w",
 				candidate.Provider, candidate.Model, err)
 		}
 
