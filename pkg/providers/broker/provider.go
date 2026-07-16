@@ -159,6 +159,45 @@ type FuturesProvider interface {
 	CancelAllFuturesOrders(ctx context.Context, symbol string) ([]ccxt.Order, error)
 }
 
+// OptionOrderRequest is the exchange-neutral option order input.
+// Symbols use CCXT option notation (e.g. Deribit "BTC/USD:BTC-25-12-26-100000-C");
+// adapters may also accept the venue-native instrument id and normalize it.
+type OptionOrderRequest struct {
+	Symbol     string
+	OrderType  string // "limit" | "market"
+	Side       string // "buy" | "sell"
+	Amount     float64
+	Price      *float64
+	ReduceOnly bool
+	Params     map[string]interface{}
+}
+
+// OptionsProvider extends Provider with options market data and trading.
+// Deribit is the first implementation. NOTE: prefer FetchGreeks for
+// per-instrument pricing — ccxt-go's typed Option struct has known
+// mis-mapped fields, so chain values should be read from Option.Info.
+type OptionsProvider interface {
+	Provider
+
+	// LoadOptionMarkets returns option markets keyed by CCXT symbol.
+	LoadOptionMarkets(ctx context.Context) (map[string]ccxt.MarketInterface, error)
+	// FetchOptionChain returns the full chain for an underlying currency code (e.g. "BTC").
+	FetchOptionChain(ctx context.Context, code string) (ccxt.OptionChain, error)
+	// FetchOption returns market data for a single option symbol.
+	FetchOption(ctx context.Context, symbol string) (ccxt.Option, error)
+	// FetchGreeks returns greeks + IV + mark data for a single option symbol.
+	FetchGreeks(ctx context.Context, symbol string) (ccxt.Greeks, error)
+	// FetchOptionPositions returns open option positions. currency filters by
+	// settlement currency (e.g. "BTC"); empty currency returns all supported.
+	FetchOptionPositions(ctx context.Context, currency string) ([]ccxt.Position, error)
+	// CreateOptionOrder submits an option order. Amount is in contracts.
+	CreateOptionOrder(ctx context.Context, req OptionOrderRequest) (ccxt.Order, error)
+	// CancelOptionOrder cancels an open option order by id.
+	CancelOptionOrder(ctx context.Context, id, symbol string) (ccxt.Order, error)
+	// FetchOptionOpenOrders returns open option orders, optionally for one symbol.
+	FetchOptionOpenOrders(ctx context.Context, symbol string) ([]ccxt.Order, error)
+}
+
 // EarnRatePoint represents a single historical earn rate data point.
 // Rate is an annualized fraction (0.05 == 5% APY).
 // Timestamp is in milliseconds.

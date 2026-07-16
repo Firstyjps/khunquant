@@ -22,6 +22,7 @@ import (
 	_ "github.com/cryptoquantumwave/khunquant/pkg/exchanges/binance"
 	_ "github.com/cryptoquantumwave/khunquant/pkg/exchanges/binanceth"
 	_ "github.com/cryptoquantumwave/khunquant/pkg/exchanges/bitkub"
+	_ "github.com/cryptoquantumwave/khunquant/pkg/exchanges/deribit"
 	_ "github.com/cryptoquantumwave/khunquant/pkg/exchanges/okx"
 	_ "github.com/cryptoquantumwave/khunquant/pkg/exchanges/settrade"
 )
@@ -251,6 +252,18 @@ func NewAgentInstance(
 	}
 	if cfg.Tools.IsToolEnabled("futures_modify_protection") {
 		toolsRegistry.Register(tools.NewFuturesModifyProtectionTool(cfg))
+	}
+	if cfg.Tools.IsToolEnabled("options_chain") {
+		toolsRegistry.Register(tools.NewOptionsChainTool(cfg))
+	}
+	if cfg.Tools.IsToolEnabled("option_quote") {
+		toolsRegistry.Register(tools.NewOptionQuoteTool(cfg))
+	}
+	if cfg.Tools.IsToolEnabled("option_positions") {
+		toolsRegistry.Register(tools.NewOptionPositionsTool(cfg))
+	}
+	if cfg.Tools.IsToolEnabled("option_order") {
+		toolsRegistry.Register(tools.NewOptionOrderTool(cfg))
 	}
 	if cfg.Tools.IsToolEnabled("futures_cancel_orders") {
 		toolsRegistry.Register(tools.NewFuturesCancelOrdersTool(cfg))
