@@ -34,9 +34,9 @@ import (
 	"github.com/cryptoquantumwave/khunquant/pkg/cron"
 	"github.com/cryptoquantumwave/khunquant/pkg/dca"
 	"github.com/cryptoquantumwave/khunquant/pkg/debugtap"
-	"github.com/cryptoquantumwave/khunquant/pkg/devmcp"
 	"github.com/cryptoquantumwave/khunquant/pkg/deltaneutral"
 	"github.com/cryptoquantumwave/khunquant/pkg/devices"
+	"github.com/cryptoquantumwave/khunquant/pkg/devmcp"
 	_ "github.com/cryptoquantumwave/khunquant/pkg/exchanges/binance"
 	_ "github.com/cryptoquantumwave/khunquant/pkg/exchanges/binanceth"
 	_ "github.com/cryptoquantumwave/khunquant/pkg/exchanges/bitkub"
@@ -47,6 +47,7 @@ import (
 	"github.com/cryptoquantumwave/khunquant/pkg/logger"
 	"github.com/cryptoquantumwave/khunquant/pkg/media"
 	"github.com/cryptoquantumwave/khunquant/pkg/providers"
+	"github.com/cryptoquantumwave/khunquant/pkg/rebalance"
 	"github.com/cryptoquantumwave/khunquant/pkg/state"
 	"github.com/cryptoquantumwave/khunquant/pkg/tools"
 	"github.com/cryptoquantumwave/khunquant/pkg/voice"
@@ -68,7 +69,7 @@ type gatewayServices struct {
 	ChannelManager   *channels.Manager
 	DeviceService    *devices.Service
 	HealthServer     *health.Server
-	DebugTap         *debugtap.Store  // non-nil only while dev-mcp is enabled
+	DebugTap         *debugtap.Store     // non-nil only while dev-mcp is enabled
 	LogBuf           *debugtap.LogBuffer // persists across reloads while dev-mcp is on
 }
 
@@ -688,6 +689,15 @@ func setupCronTool(
 		dnStore = store
 	}
 
+	// Rebalance store — opened unconditionally for the same reason (rebal:* jobs).
+	var rebalStore *rebalance.Store
+	if store, storeErr := rebalance.NewStore(workspace); storeErr != nil {
+		logger.ErrorCF("gateway", "Failed to open rebalance store; rebalance cron gate and tools disabled",
+			map[string]any{"error": storeErr.Error()})
+	} else {
+		rebalStore = store
+	}
+
 	// Set onJob handler — alert, DCA, and DN jobs are handled directly in code;
 	// all other jobs are routed through the agent LLM via cronTool.
 	cronService.SetOnJob(func(job *cron.CronJob) (string, error) {
@@ -702,6 +712,9 @@ func setupCronTool(
 		}
 		if strings.HasPrefix(job.Name, "dn:") && dnStore != nil {
 			return handleDeltaNeutralMonitorJob(context.Background(), job, cfg, dnStore, cronTool, msgBus)
+		}
+		if strings.HasPrefix(job.Name, "rebal:") && rebalStore != nil {
+			return handleRebalanceJob(context.Background(), job, cfg, rebalStore, msgBus)
 		}
 		if cronTool != nil {
 			return cronTool.ExecuteJob(context.Background(), job), nil
@@ -797,6 +810,26 @@ func setupCronTool(
 		}
 		if cfg.Tools.IsToolEnabled("render_delta_neutral_yield_chart") {
 			agentLoop.RegisterTool(tools.NewRenderDeltaNeutralYieldChartTool(dnStore))
+		}
+	}
+
+	// Rebalance tools — plan create/delete need the cron service, so they
+	// register here rather than in the agent instance.
+	if rebalStore != nil {
+		if cfg.Tools.IsToolEnabled("rebalance_check") {
+			agentLoop.RegisterTool(tools.NewRebalanceCheckTool(cfg, rebalStore))
+		}
+		if cfg.Tools.IsToolEnabled("rebalance_plan_create") {
+			agentLoop.RegisterTool(tools.NewRebalancePlanCreateTool(cfg, rebalStore, cronService))
+		}
+		if cfg.Tools.IsToolEnabled("rebalance_plan_list") {
+			agentLoop.RegisterTool(tools.NewRebalancePlanListTool(rebalStore))
+		}
+		if cfg.Tools.IsToolEnabled("rebalance_plan_delete") {
+			agentLoop.RegisterTool(tools.NewRebalancePlanDeleteTool(rebalStore, cronService))
+		}
+		if cfg.Tools.IsToolEnabled("rebalance_execute") {
+			agentLoop.RegisterTool(tools.NewRebalanceExecuteTool(cfg, rebalStore))
 		}
 	}
 

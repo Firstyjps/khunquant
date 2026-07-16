@@ -1,59 +1,61 @@
 ---
 name: rebalancing
-description: Rebalance a portfolio to target allocation weights. Computes required trades from current allocation and executes them with user confirmation.
+description: Deterministic portfolio rebalancing to target allocation weights — drift checks, trade proposals, scheduled monitoring, and optional auto-execution. All numbers come from the rebalance engine, never from manual calculation.
 ---
 
 # Portfolio Rebalancing
 
-Systematically rebalance a portfolio to target weights using the allocation and trading tools.
+Rebalance a portfolio to target weights using the deterministic rebalance engine. **Never compute drift, trade sizes, or allocations yourself** — the `rebalance_*` tools do all math in code and you orchestrate + explain.
 
-## Rebalancing Workflow
+## Tools
 
+| Tool | Purpose |
+|---|---|
+| `rebalance_check` | Show current vs target allocation + the proposed trades (read-only, always safe) |
+| `rebalance_plan_create` | Save a plan + schedule automatic drift checks (cron) |
+| `rebalance_plan_list` / `rebalance_plan_delete` | Manage plans |
+| `rebalance_execute` | Execute a plan's proposal now (dry-run unless confirm=true) |
+
+## Key semantics (explain when the user sets up a plan)
+
+- **Targets must include the quote asset** (e.g. USDT) — its weight is the stable buffer. Weights sum to 100.
+- **Only target assets participate.** Other holdings on the account are ignored — tell the user this if their account has more assets than the targets.
+- **Tolerance** (default 5 pts): no trades while every asset is within ±tolerance of target. **Min trade size** (default 10 USD) suppresses dust; suppressed trades are listed, not hidden.
+- Trades are **spot market orders vs the quote, sells first** (frees quote before buys). Execution stops at the first failure and reports honestly.
+- Allocation values include locked balances; execution can fail on locked funds — surface that rather than retrying blindly.
+
+## Two modes
+
+- **alert** (default): when a scheduled check finds drift beyond tolerance, the user gets the full proposal and decides. Execution then goes through `rebalance_execute confirm=true`.
+- **auto**: the scheduled check executes the proposal immediately and reports fills. Before creating an auto plan, make sure the user explicitly wants hands-off execution and confirm the tolerance/min-trade values with them once. Hard gates (trade permission, daily loss limit, rate limit) still apply on every auto run.
+
+## Workflows
+
+### One-off rebalance
 ```
-portfolio_allocation → compute target trades → confirm with user → execute via create_order
+User: "rebalance พอร์ต binance เป็น BTC 50 / ETH 30 / USDT 20"
+  → rebalance_check provider=binance targets={"BTC":50,"ETH":30,"USDT":20}
+  → present the drift table + proposal from the tool output
+  → user agrees → rebalance_plan_create (so execute has a plan) → rebalance_execute confirm=true
+  → rebalance_check again to show the post-trade allocation
 ```
 
-### Step 1: Assess Current Allocation
+### Scheduled monitoring
 ```
-portfolio_allocation [quote=USDT]
+rebalance_plan_create name="main" provider=binance targets={...} tolerance_pct=5 schedule="0 */6 * * *" mode=alert
+  → cron checks drift every 6h, silent while within tolerance
+  → on breach: user receives the proposal in chat, decides to execute or not
 ```
-Review per-asset weights and concentration warnings (>30%).
 
-### Step 2: Define Target Allocation
-Ask the user what target weights they want, e.g.:
-- BTC: 50%, ETH: 30%, USDT: 20%
-
-### Step 3: Compute Required Trades
-For each asset:
+### Hands-off auto-rebalancing
 ```
-trade_value = (target_weight - current_weight) × total_portfolio_value
-trade_amount = trade_value / current_price (from get_ticker)
+rebalance_plan_create ... mode=auto
+  → on breach the engine executes and reports fills automatically
 ```
-Positive = buy; negative = sell.
 
-### Step 4: Review and Confirm with User
-Present the trade plan:
-- List all proposed trades with symbols, sides, amounts, and estimated costs
-- Ask for explicit confirmation before executing
+## Guardrails
 
-### Step 5: Execute Trades
-For each confirmed trade, call `create_order`:
-- Use limit orders at mid-price (bid/ask from `get_orderbook`) for large trades
-- Use market orders for small trades (<$500 notional)
-- Verify each fill with `get_order` before proceeding to the next
-
-### Step 6: Verify Final Allocation
-Call `portfolio_allocation` again to confirm the rebalance completed as intended.
-
-## Safety Rules
-
-1. **Never exceed 5 orders per minute** (rate limit — check `get_order_rate_status`).
-2. **Always confirm with the user** before executing any real order.
-3. **Start with paper_trade** for each planned trade to preview the notional value.
-4. **Preserve at least 5% USDT/stablecoin** as a buffer — never rebalance to 100% risk assets.
-5. **Stop immediately** if any order fails — call `get_open_orders` to check for dangling orders.
-
-## Notes
-- Use `transfer_funds` if assets need to be moved between spot and futures wallets first.
-- Consider transaction fees when computing trade amounts (typically 0.1% per trade).
-- For large portfolios, break rebalancing into multiple sessions across different days.
+- Present numbers ONLY from tool output. If the user asks "what if" with different weights, run `rebalance_check` ad-hoc with those targets instead of estimating.
+- After any execution, run `rebalance_check` again and show the resulting allocation.
+- If execution stopped early, check `get_open_orders` for dangling orders before anything else.
+- Fees (~0.1%/trade) mean rebalancing too often burns money — for small drift, suggest widening tolerance instead of trading more.
