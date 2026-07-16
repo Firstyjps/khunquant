@@ -113,14 +113,13 @@ func NewBaseChannel(
 		opt(bc)
 	}
 
-	// Security Audit: Check for open-by-default (unsecured) channels.
-	// PicoClaw aims to be secure-by-default. If allow_from is empty, the bot
-	// currently defaults to accepting messages from ANYONE. To explicitly
-	// acknowledge and permit this (e.g. for a public bot), use ["*"].
+	// Security: default-deny. If allow_from is empty, the bot rejects every
+	// sender on this channel. To explicitly permit open access (e.g. for a
+	// public bot), use ["*"].
 	if len(bc.allowList) == 0 {
-		logger.WarnCF("channels", "SECURITY: Channel allows EVERYONE (allow_from is empty)", map[string]any{
+		logger.WarnCF("channels", "SECURITY: Channel blocks EVERYONE (allow_from is empty)", map[string]any{
 			"channel": bc.name,
-			"hint":    "Set allow_from to your ID, or use '*' to explicitly acknowledge open access.",
+			"hint":    "Set allow_from to your ID, or use '*' to explicitly allow open access.",
 		})
 	}
 
@@ -186,8 +185,10 @@ func (c *BaseChannel) IsRunning() bool {
 }
 
 func (c *BaseChannel) IsAllowed(senderID string) bool {
+	// Default-deny: an empty allow-list rejects everyone. Use ["*"] to
+	// explicitly open the channel to all senders.
 	if len(c.allowList) == 0 {
-		return true
+		return false
 	}
 
 	// Extract parts from compound senderID like "123456|username"
@@ -231,8 +232,10 @@ func (c *BaseChannel) IsAllowed(senderID string) bool {
 // It delegates to identity.MatchAllowed for each entry, providing unified matching
 // across all legacy formats and the new canonical "platform:id" format.
 func (c *BaseChannel) IsAllowedSender(sender bus.SenderInfo) bool {
+	// Default-deny: an empty allow-list rejects everyone. Use ["*"] to
+	// explicitly open the channel to all senders.
 	if len(c.allowList) == 0 {
-		return true
+		return false
 	}
 
 	for _, allowed := range c.allowList {

@@ -650,6 +650,85 @@ func TestEvaluateHealthyPlan(t *testing.T) {
 	}
 }
 
+func TestEvaluateMissingLiquidationPrice(t *testing.T) {
+	now := time.Now()
+	plan := Plan{
+		ID:              1,
+		Name:            "test",
+		Status:          PlanStatusActive,
+		SpotProvider:    "binance",
+		FuturesProvider: "binance",
+		RiskPolicy:      DefaultRiskPolicy(),
+	}
+
+	input := EvaluationInput{
+		Plan: plan,
+		SpotState: SpotState{
+			Available: true,
+			Price:     50000,
+			Quantity:  1,
+			ValueUSDT: 50000,
+		},
+		FuturesState: FuturesState{
+			Available:         true,
+			MarkPrice:         50000,
+			Contracts:         1,
+			NotionalUSDT:      50000,
+			UnrealizedPnLUSDT: 100,
+			LiquidationPrice:  0, // exchange did not report a liq price
+			MarginRatioPct:    80,
+		},
+		FundingInfo: FundingInfo{
+			Available:         true,
+			CurrentRate:       0.0001,
+			EstimatedNextUSDT: 5,
+			RecentRates:       []float64{0.00009, 0.0001, 0.00011},
+			NextFundingTime:   now.Add(time.Hour),
+		},
+		Now: now,
+	}
+
+	result := Evaluate(input)
+
+	if !result.ThresholdBreached {
+		t.Fatalf("Expected ThresholdBreached=true when liq price is missing on an open position")
+	}
+	found := false
+	for _, code := range result.BreachCodes {
+		if code == "liquidation_price_missing" {
+			found = true
+		}
+		if code == "liquidation_distance_low" {
+			t.Errorf("Missing liq price must not masquerade as liquidation_distance_low")
+		}
+	}
+	if !found {
+		t.Errorf("Expected breach code liquidation_price_missing, got %v", result.BreachCodes)
+	}
+	if result.DataStatus != DataStatusPartial {
+		t.Errorf("Expected DataStatus=partial, got %s", result.DataStatus)
+	}
+	if result.Snapshot.DataStatus != DataStatusPartial {
+		t.Errorf("Expected Snapshot.DataStatus=partial, got %s", result.Snapshot.DataStatus)
+	}
+	if result.Severity != "warn" {
+		t.Errorf("Expected severity warn, got %s", result.Severity)
+	}
+	if result.RecommendedAction == "" {
+		t.Errorf("Expected a recommended action for liquidation_price_missing")
+	}
+
+	// A plan with no futures position must NOT trigger the breach (no exposure).
+	input.FuturesState.Contracts = 0
+	input.FuturesState.NotionalUSDT = 0
+	result = Evaluate(input)
+	for _, code := range result.BreachCodes {
+		if code == "liquidation_price_missing" {
+			t.Errorf("liquidation_price_missing must not fire without an open position")
+		}
+	}
+}
+
 func TestEvaluateCrossExchange(t *testing.T) {
 	now := time.Now()
 	plan := Plan{

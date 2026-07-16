@@ -42,6 +42,7 @@ func mustReceiveInbound(t *testing.T, msgBus *bus.MessageBus) bus.InboundMessage
 
 func TestOnChatBotMessageReceived_GroupMentionOnlyUsesIsInAtListAndStripsMention(t *testing.T) {
 	ch, msgBus := newTestDingTalkChannel(t, config.DingTalkConfig{
+		AllowFrom:    []string{"*"},
 		GroupTrigger: config.GroupTriggerConfig{MentionOnly: true},
 	})
 
@@ -74,7 +75,7 @@ func TestOnChatBotMessageReceived_GroupMentionOnlyUsesIsInAtListAndStripsMention
 }
 
 func TestOnChatBotMessageReceived_DirectFallbackSenderIDUsesConversationID(t *testing.T) {
-	ch, msgBus := newTestDingTalkChannel(t, config.DingTalkConfig{})
+	ch, msgBus := newTestDingTalkChannel(t, config.DingTalkConfig{AllowFrom: []string{"*"}})
 
 	_, err := ch.onChatBotMessageReceived(context.Background(), &chatbot.BotCallbackDataModel{
 		Text:             chatbot.BotCallbackDataTextModel{Content: "ping"},

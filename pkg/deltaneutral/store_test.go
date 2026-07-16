@@ -2,6 +2,7 @@ package deltaneutral
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -736,6 +737,55 @@ func TestListExecutions(t *testing.T) {
 	}
 	if len(execs) != 3 {
 		t.Errorf("Expected 3 executions, got %d", len(execs))
+	}
+}
+
+func TestListNonTerminalExecutions(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	plan := createTestPlan(t, "test-nonterminal")
+	planID, err := store.SavePlan(ctx, plan)
+	if err != nil {
+		t.Fatalf("SavePlan failed: %v", err)
+	}
+
+	// One execution per state; only non-terminal ones must be returned.
+	states := []ExecutionState{
+		ExecutionStatePending,          // non-terminal (pre-trade)
+		ExecutionStatePlacingSecondLeg, // non-terminal (exposure risk)
+		ExecutionStateRecoveryRequired, // non-terminal (exposure risk)
+		ExecutionStateBothLegsFilled,   // terminal (open position steady state)
+		ExecutionStateUnwound,          // terminal
+		ExecutionStateFailed,           // terminal
+		ExecutionStateCancelled,        // terminal
+	}
+	for i, st := range states {
+		exec := &Execution{
+			PlanID:      planID,
+			AttemptID:   fmt.Sprintf("attempt-%d", i),
+			State:       string(st),
+			RequestedAt: time.Now(),
+			CreatedAt:   time.Now(),
+			UpdatedAt:   time.Now(),
+		}
+		if _, err := store.SaveExecution(ctx, exec); err != nil {
+			t.Fatalf("SaveExecution(%s) failed: %v", st, err)
+		}
+	}
+
+	execs, err := store.ListNonTerminalExecutions(ctx)
+	if err != nil {
+		t.Fatalf("ListNonTerminalExecutions failed: %v", err)
+	}
+	if len(execs) != 3 {
+		t.Fatalf("Expected 3 non-terminal executions, got %d: %+v", len(execs), execs)
+	}
+	for _, e := range execs {
+		if IsTerminal(ExecutionState(e.State)) {
+			t.Errorf("Terminal execution %q leaked into non-terminal list", e.State)
+		}
 	}
 }
 
