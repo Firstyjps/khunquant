@@ -270,7 +270,7 @@ func TestSpawnSubTurn_OrphanResultRouting(t *testing.T) {
 	parent.Finish(false)
 
 	// Call deliverSubTurnResult directly to simulate a delayed child
-	deliverSubTurnResult(parent, "delayed-child", &tools.ToolResult{ForLLM: "late result"})
+	deliverSubTurnResult(nil, parent, "delayed-child", "", "", &tools.ToolResult{ForLLM: "late result"})
 
 	// Verify Orphan event is emitted
 	if !collector.hasEventOfType(SubTurnOrphanResultEvent{}) {
@@ -616,7 +616,7 @@ func TestDeliverSubTurnResultNoDeadlock(t *testing.T) {
 		go func(id int) {
 			defer wg.Done()
 			result := &tools.ToolResult{ForLLM: fmt.Sprintf("result-%d", id)}
-			deliverSubTurnResult(parent, fmt.Sprintf("child-%d", id), result)
+			deliverSubTurnResult(nil, parent, fmt.Sprintf("child-%d", id), "", "", result)
 		}(i)
 	}
 
@@ -745,7 +745,7 @@ func TestFinishedChannelClosedState(t *testing.T) {
 
 	// Verify deliverSubTurnResult correctly uses Finished() channel and treats as orphan
 	result := &tools.ToolResult{ForLLM: "late result"}
-	deliverSubTurnResult(ts, "child-1", result) // Will emit orphan due to <-ts.Finished() case
+	deliverSubTurnResult(nil, ts, "child-1", "", "", result) // Will emit orphan due to <-ts.Finished() case
 }
 
 // TestFinalPollCapturesLateResults verifies that the final poll before Finish()
@@ -1226,7 +1226,7 @@ func TestDeliverSubTurnResult_RaceWithFinish(t *testing.T) {
 				ForLLM: fmt.Sprintf("result-%d", id),
 			}
 			// This should not panic, even if Finish() is called concurrently
-			deliverSubTurnResult(parentTS, fmt.Sprintf("child-%d", id), result)
+			deliverSubTurnResult(nil, parentTS, fmt.Sprintf("child-%d", id), "", "", result)
 		}(i)
 	}
 

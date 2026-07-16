@@ -3,6 +3,7 @@ package providers
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -244,7 +245,7 @@ func TestFallback_EmptyFallbacks(t *testing.T) {
 	}
 }
 
-func TestFallback_UnclassifiedError(t *testing.T) {
+func TestFallback_UnknownErrorFailsOver(t *testing.T) {
 	ct := NewCooldownTracker()
 	fc := NewFallbackChain(ct)
 
@@ -261,10 +262,38 @@ func TestFallback_UnclassifiedError(t *testing.T) {
 
 	_, err := fc.Execute(context.Background(), candidates, run)
 	if err == nil {
-		t.Fatal("expected error for unclassified error")
+		t.Fatal("expected error when every candidate fails")
+	}
+	if attempt != 2 {
+		t.Errorf("attempt = %d, want 2 (unknown errors are retriable and must fail over)", attempt)
+	}
+	var exhausted *FallbackExhaustedError
+	if !errors.As(err, &exhausted) {
+		t.Errorf("expected FallbackExhaustedError, got %T: %v", err, err)
+	}
+}
+
+func TestFallback_WrappedCancelDoesNotFallback(t *testing.T) {
+	ct := NewCooldownTracker()
+	fc := NewFallbackChain(ct)
+
+	candidates := []FallbackCandidate{
+		makeCandidate("openai", "gpt-4"),
+		makeCandidate("anthropic", "claude"),
+	}
+
+	attempt := 0
+	run := func(ctx context.Context, provider, model string) (*LLMResponse, error) {
+		attempt++
+		return nil, fmt.Errorf("request aborted: %w", context.Canceled)
+	}
+
+	_, err := fc.Execute(context.Background(), candidates, run)
+	if err == nil {
+		t.Fatal("expected error for canceled request")
 	}
 	if attempt != 1 {
-		t.Errorf("attempt = %d, want 1 (should not fallback on unclassified)", attempt)
+		t.Errorf("attempt = %d, want 1 (user abort must not fall over)", attempt)
 	}
 }
 

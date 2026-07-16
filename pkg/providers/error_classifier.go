@@ -139,19 +139,23 @@ var (
 )
 
 // ClassifyError classifies an error into a FailoverError with reason.
-// Returns nil if the error is not classifiable (unknown errors should not trigger fallback).
+// Errors that match no known pattern are classified FailoverUnknown (retriable)
+// so the fallback chain still tries the next candidate — an unrecognized error
+// message must not strand the request on a broken provider.
+// Returns nil only for nil errors and context.Canceled (user abort: never fallback).
 func ClassifyError(err error, provider, model string) *FailoverError {
 	if err == nil {
 		return nil
 	}
 
-	// Context cancellation: user abort, never fallback.
-	if err == context.Canceled {
+	// Context cancellation: user abort, never fallback. errors.Is also catches
+	// wrapped cancellations, which must not be retried as "unknown".
+	if errors.Is(err, context.Canceled) {
 		return nil
 	}
 
 	// Context deadline exceeded: treat as timeout, always fallback.
-	if err == context.DeadlineExceeded {
+	if errors.Is(err, context.DeadlineExceeded) {
 		return &FailoverError{
 			Reason:   FailoverTimeout,
 			Provider: provider,
@@ -206,7 +210,14 @@ func ClassifyError(err error, provider, model string) *FailoverError {
 		}
 	}
 
-	return nil
+	// No pattern matched: classify as unknown (retriable) so the fallback
+	// chain can still move on to the next candidate.
+	return &FailoverError{
+		Reason:   FailoverUnknown,
+		Provider: provider,
+		Model:    model,
+		Wrapped:  err,
+	}
 }
 
 // classifyByErrorType maps concrete transport-layer error types to a retryable

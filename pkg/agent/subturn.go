@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cryptoquantumwave/khunquant/pkg/bus"
 	"github.com/cryptoquantumwave/khunquant/pkg/logger"
 	"github.com/cryptoquantumwave/khunquant/pkg/providers"
 	"github.com/cryptoquantumwave/khunquant/pkg/tools"
@@ -312,7 +313,7 @@ func spawnSubTurn(ctx context.Context, al *AgentLoop, parentTS *turnState, cfg S
 
 		// Result Delivery Strategy (Async vs Sync)
 		if cfg.Async {
-			deliverSubTurnResult(parentTS, childID, result)
+			deliverSubTurnResult(al, parentTS, childID, tools.ToolChannel(ctx), tools.ToolChatID(ctx), result)
 		}
 
 		MockEventBus.Emit(SubTurnEndEvent{
@@ -338,17 +339,15 @@ func spawnSubTurn(ctx context.Context, al *AgentLoop, parentTS *turnState, cfg S
 //
 // Delivery behavior:
 //   - If parent turn is still running: attempts to deliver to pendingResults channel
-//   - If channel is full: emits SubTurnOrphanResultEvent (result is lost from channel but tracked)
-//   - If parent turn has finished: emits SubTurnOrphanResultEvent (late arrival)
+//   - If the parent has finished (before or while waiting on a full channel): the
+//     result is REPUBLISHED as a system inbound message via republishOrphanResult,
+//     so it still reaches the user through the normal agent loop instead of being
+//     dropped (MockEventBus is a stdout stub — an event alone loses the result).
 //
 // Thread safety:
 //   - Reads parent state under lock, then releases lock before channel send
 //   - Small race window exists but is acceptable (worst case: result becomes orphan)
-//
-// Event emissions:
-//   - SubTurnResultDeliveredEvent: successful delivery to channel
-//   - SubTurnOrphanResultEvent: delivery failed (parent finished or channel full)
-func deliverSubTurnResult(parentTS *turnState, childID string, result *tools.ToolResult) {
+func deliverSubTurnResult(al *AgentLoop, parentTS *turnState, childID, channel, chatID string, result *tools.ToolResult) {
 	// Let GC clean up the pendingResults channel; parent Finish will no longer close it.
 	// We use defer/recover to catch any unlikely channel panics if it were ever closed.
 	defer func() {
@@ -373,15 +372,10 @@ func deliverSubTurnResult(parentTS *turnState, childID string, result *tools.Too
 	resultChan := parentTS.pendingResults
 	parentTS.mu.Unlock()
 
-	// If parent turn has already finished, treat this as an orphan result
+	// If parent turn has already finished, route the result back through the
+	// agent loop instead of dropping it.
 	if isFinished || resultChan == nil {
-		if result != nil {
-			MockEventBus.Emit(SubTurnOrphanResultEvent{
-				ParentID: parentTS.turnID,
-				ChildID:  childID,
-				Result:   result,
-			})
-		}
+		republishOrphanResult(al, parentTS, childID, channel, chatID, result)
 		return
 	}
 
@@ -398,20 +392,54 @@ func deliverSubTurnResult(parentTS *turnState, childID string, result *tools.Too
 			Result:   result,
 		})
 	case <-parentTS.Finished():
-		// Parent finished while we were waiting to deliver.
-		// The result cannot be delivered to the LLM, so it becomes an orphan.
+		// Parent finished while we were waiting to deliver (e.g. channel full).
+		// Route the result back through the agent loop instead of dropping it.
 		logger.WarnCF("subturn", "parent finished before result could be delivered", map[string]any{
 			"parent_id": parentTS.turnID,
 			"child_id":  childID,
 		})
-		if result != nil {
-			MockEventBus.Emit(SubTurnOrphanResultEvent{
-				ParentID: parentTS.turnID,
-				ChildID:  childID,
-				Result:   result,
-			})
-		}
+		republishOrphanResult(al, parentTS, childID, channel, chatID, result)
 	}
+}
+
+// republishOrphanResult routes a sub-turn result that missed its parent turn
+// back into the agent loop as a system inbound message — the same path async
+// tools use — so the result reaches the user instead of being silently lost.
+// Falls back to a warn log when there is no route back (no bus or no chat info).
+func republishOrphanResult(al *AgentLoop, parentTS *turnState, childID, channel, chatID string, result *tools.ToolResult) {
+	if result == nil {
+		return
+	}
+	MockEventBus.Emit(SubTurnOrphanResultEvent{
+		ParentID: parentTS.turnID,
+		ChildID:  childID,
+		Result:   result,
+	})
+
+	content := result.ContentForLLM()
+	if al == nil || al.bus == nil || channel == "" || chatID == "" || content == "" {
+		logger.WarnCF("subturn", "orphan sub-turn result has no route back to user", map[string]any{
+			"parent_id": parentTS.turnID,
+			"child_id":  childID,
+			"channel":   channel,
+			"chat_id":   chatID,
+		})
+		return
+	}
+
+	pubCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = al.bus.PublishInbound(pubCtx, bus.InboundMessage{
+		Channel:  "system",
+		SenderID: fmt.Sprintf("subturn:%s", childID),
+		ChatID:   fmt.Sprintf("%s:%s", channel, chatID),
+		Content:  content,
+	})
+	logger.InfoCF("subturn", "orphan sub-turn result republished to agent loop", map[string]any{
+		"parent_id": parentTS.turnID,
+		"child_id":  childID,
+		"channel":   channel,
+	})
 }
 
 // runTurn builds a temporary AgentInstance from SubTurnConfig and delegates to
