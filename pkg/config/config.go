@@ -194,7 +194,8 @@ type TradingRiskConfig struct {
 	AllowMargin bool `json:"allow_margin" env:"KHUNQUANT_TRADING_ALLOW_MARGIN"`
 
 	// AllowLeverage enables leveraged / futures order types.
-	// Default false — must explicitly opt-in.
+	// Default true (see defaults.go) — set false to disable all live futures
+	// mutations (futures orders, delta-neutral open/resize/unwind).
 	AllowLeverage bool `json:"allow_leverage" env:"KHUNQUANT_TRADING_ALLOW_LEVERAGE"`
 }
 

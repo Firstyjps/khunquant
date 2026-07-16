@@ -1127,6 +1127,35 @@ func (s *Store) ListExecutions(ctx context.Context, planID int64, limit, offset 
 	return execs, rows.Err()
 }
 
+// ListNonTerminalExecutions returns all executions whose state is not terminal
+// (see IsTerminal). Used by the boot-time reconciliation scan to detect
+// executions stranded mid-flight by a crash or restart of a previous run.
+func (s *Store) ListNonTerminalExecutions(ctx context.Context) ([]Execution, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, plan_id, attempt_id, state, requested_at, approved_at, completed_at,
+		        error_msg, created_at, updated_at
+		 FROM delta_neutral_executions
+		 WHERE state NOT IN (?, ?, ?, ?)
+		 ORDER BY requested_at ASC`,
+		string(ExecutionStateUnwound), string(ExecutionStateFailed),
+		string(ExecutionStateCancelled), string(ExecutionStateBothLegsFilled),
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var execs []Execution
+	for rows.Next() {
+		exec, err := scanExecution(rows.Scan)
+		if err != nil {
+			return nil, err
+		}
+		execs = append(execs, *exec)
+	}
+	return execs, rows.Err()
+}
+
 // SaveExecutionLeg inserts a new execution leg and sets leg.ID on success.
 func (s *Store) SaveExecutionLeg(ctx context.Context, leg *ExecutionLeg) (int64, error) {
 	res, err := s.db.ExecContext(ctx,

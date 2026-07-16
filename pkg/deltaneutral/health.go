@@ -69,6 +69,15 @@ func Evaluate(input EvaluationInput) HealthEvaluation {
 	liquidationDistance := computeLiquidationDistance(input.FuturesState.MarkPrice, input.FuturesState.LiquidationPrice)
 	result.Snapshot.LiquidationDistancePct = liquidationDistance
 
+	// Step 4.5: An active plan with a real futures position but no liquidation
+	// price means liquidation risk is invisible to the monitor. Don't fail open:
+	// computeLiquidationDistance reports 100 ("safe") in that case, so flag the
+	// blind spot explicitly via a breach code + degraded data status below.
+	liqPriceMissing := input.Plan.Status != PlanStatusDraft && input.Plan.Status != PlanStatusReady &&
+		input.FuturesState.Available && input.FuturesState.MarkPrice != 0 &&
+		input.FuturesState.LiquidationPrice == 0 &&
+		(input.FuturesState.Contracts != 0 || input.FuturesState.NotionalUSDT != 0)
+
 	// Step 5: Classify funding state
 	fundingState := classifyFunding(input.FundingInfo, input.Plan.RiskPolicy)
 	result.Snapshot.FundingState = fundingState
@@ -105,6 +114,13 @@ func Evaluate(input EvaluationInput) HealthEvaluation {
 		input.ExitSpreadPct,
 		input.Plan.ExitRules,
 	)
+	if liqPriceMissing {
+		breachCodes = append(breachCodes, "liquidation_price_missing")
+		if result.DataStatus == DataStatusOK {
+			result.DataStatus = DataStatusPartial
+			result.Snapshot.DataStatus = DataStatusPartial
+		}
+	}
 	result.BreachCodes = breachCodes
 	result.ThresholdBreached = len(breachCodes) > 0
 	result.Snapshot.BreachCodes = breachCodes
@@ -449,6 +465,10 @@ func recommendAction(breachCodes []string, snapshot MonitorSnapshot) string {
 		if code == "liquidation_distance_low" {
 			return "Liquidation distance is dangerously low. Reduce position or add margin immediately."
 		}
+	}
+
+	if containsAny(breachCodes, []string{"liquidation_price_missing"}) {
+		return "Exchange did not report a liquidation price for the open futures position. Liquidation risk is NOT being monitored — verify the position and margin mode on the exchange."
 	}
 
 	// Danger breaches

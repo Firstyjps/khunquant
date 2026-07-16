@@ -14,7 +14,7 @@ import (
 func TestHandleC2CMessage_IncludesAccountIDMetadata(t *testing.T) {
 	messageBus := bus.NewMessageBus()
 	ch := &QQChannel{
-		BaseChannel: channels.NewBaseChannel("qq", nil, messageBus, nil),
+		BaseChannel: channels.NewBaseChannel("qq", nil, messageBus, []string{"*"}),
 		dedup:       make(map[string]time.Time),
 		done:        make(chan struct{}),
 		ctx:         context.Background(),

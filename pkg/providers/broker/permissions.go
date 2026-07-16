@@ -87,7 +87,7 @@ func CheckRisk(cfg *config.Config, side, orderType string, amount float64, price
 // Every live futures mutation tool must call this before executing.
 func CheckLeverage(cfg *config.Config, action string) error {
 	if !cfg.TradingRisk.AllowLeverage {
-		return fmt.Errorf("%s requires trading_risk.allow_leverage=true — leverage trading is disabled by default", action)
+		return fmt.Errorf("%s requires trading_risk.allow_leverage=true — leverage trading is disabled in this config", action)
 	}
 	return nil
 }

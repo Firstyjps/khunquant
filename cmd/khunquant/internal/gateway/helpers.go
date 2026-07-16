@@ -261,6 +261,12 @@ func setupAndStartServices(
 		return nil, fmt.Errorf("error starting channels: %w", err)
 	}
 
+	// Alert on delta-neutral executions stranded mid-flight by a previous
+	// crash — a half-open position bleeds silently until someone looks.
+	if setupDNStore != nil {
+		go reconcileDeltaNeutralExecutions(context.Background(), setupDNStore, msgBus)
+	}
+
 	fmt.Printf("✓ Health endpoints available at http://%s:%d/health and /ready\n", cfg.Gateway.Host, cfg.Gateway.Port)
 
 	// Setup state manager and device service

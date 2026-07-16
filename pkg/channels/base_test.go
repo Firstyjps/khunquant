@@ -18,8 +18,14 @@ func TestBaseChannelIsAllowed(t *testing.T) {
 		want      bool
 	}{
 		{
-			name:      "empty allowlist allows all",
+			name:      "empty allowlist denies all (default-deny)",
 			allowList: nil,
+			senderID:  "anyone",
+			want:      false,
+		},
+		{
+			name:      "wildcard allowlist allows all",
+			allowList: []string{"*"},
 			senderID:  "anyone",
 			want:      true,
 		},
@@ -188,8 +194,14 @@ func TestIsAllowedSender(t *testing.T) {
 		want      bool
 	}{
 		{
-			name:      "empty allowlist allows all",
+			name:      "empty allowlist denies all (default-deny)",
 			allowList: nil,
+			sender:    bus.SenderInfo{PlatformID: "anyone"},
+			want:      false,
+		},
+		{
+			name:      "wildcard allowlist allows all",
+			allowList: []string{"*"},
 			sender:    bus.SenderInfo{PlatformID: "anyone"},
 			want:      true,
 		},
@@ -442,7 +454,7 @@ func TestHandleMessage_WithSenderInfo(t *testing.T) {
 	mb := bus.NewMessageBus()
 	defer mb.Close()
 
-	ch := NewBaseChannel("test", nil, mb, nil)
+	ch := NewBaseChannel("test", nil, mb, []string{"*"})
 
 	ctx := context.Background()
 	publishedChan := make(chan bus.InboundMessage, 1)
@@ -480,7 +492,7 @@ func TestHandleMessage_MediaScope(t *testing.T) {
 	mb := bus.NewMessageBus()
 	defer mb.Close()
 
-	ch := NewBaseChannel("test", nil, mb, nil)
+	ch := NewBaseChannel("test", nil, mb, []string{"*"})
 
 	ctx := context.Background()
 	publishedChan := make(chan bus.InboundMessage, 1)
@@ -509,7 +521,7 @@ func TestHandleMessage_MetadataPreserved(t *testing.T) {
 	mb := bus.NewMessageBus()
 	defer mb.Close()
 
-	ch := NewBaseChannel("test", nil, mb, nil)
+	ch := NewBaseChannel("test", nil, mb, []string{"*"})
 
 	ctx := context.Background()
 	publishedChan := make(chan bus.InboundMessage, 1)
@@ -609,7 +621,7 @@ func TestHandleMessage_WithTypingCapable(t *testing.T) {
 		},
 	}
 
-	baseCh := NewBaseChannel("test", nil, mb, nil)
+	baseCh := NewBaseChannel("test", nil, mb, []string{"*"})
 	baseCh.SetOwner(typingCh)
 	mockRec := &mockPlaceholderRecorder{}
 	baseCh.SetPlaceholderRecorder(mockRec)
@@ -653,7 +665,7 @@ func TestHandleMessage_WithReactionCapable(t *testing.T) {
 		},
 	}
 
-	baseCh := NewBaseChannel("test", nil, mb, nil)
+	baseCh := NewBaseChannel("test", nil, mb, []string{"*"})
 	baseCh.SetOwner(reactionCh)
 	mockRec := &mockPlaceholderRecorder{}
 	baseCh.SetPlaceholderRecorder(mockRec)
@@ -697,7 +709,7 @@ func TestHandleMessage_WithPlaceholderCapableNoAudio(t *testing.T) {
 		},
 	}
 
-	baseCh := NewBaseChannel("test", nil, mb, nil)
+	baseCh := NewBaseChannel("test", nil, mb, []string{"*"})
 	baseCh.SetOwner(placeholderCh)
 	mockRec := &mockPlaceholderRecorder{}
 	baseCh.SetPlaceholderRecorder(mockRec)
@@ -742,7 +754,7 @@ func TestHandleMessage_WithPlaceholderCapableAudioAnnotation(t *testing.T) {
 		},
 	}
 
-	baseCh := NewBaseChannel("test", nil, mb, nil)
+	baseCh := NewBaseChannel("test", nil, mb, []string{"*"})
 	baseCh.SetOwner(placeholderCh)
 	mockRec := &mockPlaceholderRecorder{}
 	baseCh.SetPlaceholderRecorder(mockRec)

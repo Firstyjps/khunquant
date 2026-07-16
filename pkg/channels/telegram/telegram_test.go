@@ -620,7 +620,7 @@ func TestSend_WithForumThreadID(t *testing.T) {
 func TestHandleMessage_ForumTopic_SetsMetadata(t *testing.T) {
 	messageBus := bus.NewMessageBus()
 	ch := &TelegramChannel{
-		BaseChannel: channels.NewBaseChannel("telegram", nil, messageBus, nil),
+		BaseChannel: channels.NewBaseChannel("telegram", nil, messageBus, []string{"*"}),
 		chatIDs:     make(map[string]int64),
 		ctx:         context.Background(),
 	}
@@ -661,7 +661,7 @@ func TestHandleMessage_ForumTopic_SetsMetadata(t *testing.T) {
 func TestHandleMessage_NoForum_NoThreadMetadata(t *testing.T) {
 	messageBus := bus.NewMessageBus()
 	ch := &TelegramChannel{
-		BaseChannel: channels.NewBaseChannel("telegram", nil, messageBus, nil),
+		BaseChannel: channels.NewBaseChannel("telegram", nil, messageBus, []string{"*"}),
 		chatIDs:     make(map[string]int64),
 		ctx:         context.Background(),
 	}
@@ -700,7 +700,7 @@ func TestHandleMessage_NoForum_NoThreadMetadata(t *testing.T) {
 func TestHandleMessage_ReplyThread_NonForum_NoIsolation(t *testing.T) {
 	messageBus := bus.NewMessageBus()
 	ch := &TelegramChannel{
-		BaseChannel: channels.NewBaseChannel("telegram", nil, messageBus, nil),
+		BaseChannel: channels.NewBaseChannel("telegram", nil, messageBus, []string{"*"}),
 		chatIDs:     make(map[string]int64),
 		ctx:         context.Background(),
 	}
@@ -743,7 +743,7 @@ func TestHandleMessage_ReplyThread_NonForum_NoIsolation(t *testing.T) {
 func TestHandleMessage_EmptyContent_Ignored(t *testing.T) {
 	messageBus := bus.NewMessageBus()
 	ch := &TelegramChannel{
-		BaseChannel: channels.NewBaseChannel("telegram", nil, messageBus, nil),
+		BaseChannel: channels.NewBaseChannel("telegram", nil, messageBus, []string{"*"}),
 		chatIDs:     make(map[string]int64),
 		ctx:         context.Background(),
 	}
