@@ -64,6 +64,11 @@ const (
 	NameOptionQuote               = "option_quote"
 	NameOptionPositions           = "option_positions"
 	NameOptionOrder               = "option_order"
+	NameDeFiWalletAdd             = "defi_wallet_add"
+	NameDeFiWalletRemove          = "defi_wallet_remove"
+	NameDeFiWalletList            = "defi_wallet_list"
+	NameDeFiWalletBalances        = "defi_wallet_balances"
+	NameDeFiPortfolio             = "defi_portfolio"
 	NameFuturesEmergencyFlatten   = "futures_emergency_flatten"
 	NameFundingRateHistory        = "funding_rate_history"
 

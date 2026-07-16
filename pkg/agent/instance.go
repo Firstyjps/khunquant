@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/cryptoquantumwave/khunquant/pkg/config"
+	"github.com/cryptoquantumwave/khunquant/pkg/defi"
 	"github.com/cryptoquantumwave/khunquant/pkg/logger"
 	"github.com/cryptoquantumwave/khunquant/pkg/media"
 	"github.com/cryptoquantumwave/khunquant/pkg/memory"
@@ -264,6 +265,32 @@ func NewAgentInstance(
 	}
 	if cfg.Tools.IsToolEnabled("option_order") {
 		toolsRegistry.Register(tools.NewOptionOrderTool(cfg))
+	}
+
+	// DeFi wallet tracker — read-only, shares one watchlist store.
+	defiEnabled := cfg.Tools.IsToolEnabled("defi_wallet_add") || cfg.Tools.IsToolEnabled("defi_wallet_remove") ||
+		cfg.Tools.IsToolEnabled("defi_wallet_list") || cfg.Tools.IsToolEnabled("defi_portfolio")
+	if defiEnabled {
+		defiStore, err := defi.NewStore(workspace)
+		if err != nil {
+			log.Printf("defi: init store: %v; defi tracker tools disabled", err)
+		} else {
+			if cfg.Tools.IsToolEnabled("defi_wallet_add") {
+				toolsRegistry.Register(tools.NewDeFiWalletAddTool(defiStore))
+			}
+			if cfg.Tools.IsToolEnabled("defi_wallet_remove") {
+				toolsRegistry.Register(tools.NewDeFiWalletRemoveTool(defiStore))
+			}
+			if cfg.Tools.IsToolEnabled("defi_wallet_list") {
+				toolsRegistry.Register(tools.NewDeFiWalletListTool(defiStore))
+			}
+			if cfg.Tools.IsToolEnabled("defi_portfolio") {
+				toolsRegistry.Register(tools.NewDeFiPortfolioTool(defiStore, snapshotStore))
+			}
+		}
+	}
+	if cfg.Tools.IsToolEnabled("defi_wallet_balances") {
+		toolsRegistry.Register(tools.NewDeFiWalletBalancesTool())
 	}
 	if cfg.Tools.IsToolEnabled("futures_cancel_orders") {
 		toolsRegistry.Register(tools.NewFuturesCancelOrdersTool(cfg))
