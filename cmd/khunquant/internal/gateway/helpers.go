@@ -40,6 +40,7 @@ import (
 	_ "github.com/cryptoquantumwave/khunquant/pkg/exchanges/binance"
 	_ "github.com/cryptoquantumwave/khunquant/pkg/exchanges/binanceth"
 	_ "github.com/cryptoquantumwave/khunquant/pkg/exchanges/bitkub"
+	_ "github.com/cryptoquantumwave/khunquant/pkg/exchanges/deribit"
 	_ "github.com/cryptoquantumwave/khunquant/pkg/exchanges/okx"
 	"github.com/cryptoquantumwave/khunquant/pkg/health"
 	"github.com/cryptoquantumwave/khunquant/pkg/heartbeat"

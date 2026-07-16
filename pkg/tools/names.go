@@ -60,6 +60,10 @@ const (
 	NameFuturesReducePosition     = "futures_reduce_position"
 	NameFuturesModifyProtection   = "futures_modify_protection"
 	NameFuturesCancelOrders       = "futures_cancel_orders"
+	NameOptionsChain              = "options_chain"
+	NameOptionQuote               = "option_quote"
+	NameOptionPositions           = "option_positions"
+	NameOptionOrder               = "option_order"
 	NameFuturesEmergencyFlatten   = "futures_emergency_flatten"
 	NameFundingRateHistory        = "funding_rate_history"
 

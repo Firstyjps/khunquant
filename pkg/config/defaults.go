@@ -643,6 +643,9 @@ func DefaultConfig() *Config {
 			Binance: BinanceExchangeConfig{
 				Enabled: false,
 			},
+			Deribit: DeribitExchangeConfig{
+				Enabled: false,
+			},
 		},
 		TradingRisk: TradingRiskConfig{
 			AllowLeverage: true,

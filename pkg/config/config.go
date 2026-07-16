@@ -245,6 +245,21 @@ type ExchangesConfig struct {
 	Bitkub    BitkubExchangeConfig    `json:"bitkub"`
 	BinanceTH BinanceTHExchangeConfig `json:"binanceth"`
 	Settrade  SettradeExchangeConfig  `json:"settrade"`
+	Deribit   DeribitExchangeConfig   `json:"deribit"`
+}
+
+// DeribitExchangeConfig holds the Deribit exchange credentials and settings.
+// Deribit is the options + perpetuals venue; public market data works without
+// credentials.
+type DeribitExchangeConfig struct {
+	Enabled  bool              `json:"enabled"  env:"KHUNQUANT_EXCHANGES_DERIBIT_ENABLED"`
+	Testnet  bool              `json:"testnet"  env:"KHUNQUANT_EXCHANGES_DERIBIT_TESTNET"`
+	Accounts []ExchangeAccount `json:"accounts,omitempty"`
+}
+
+// ResolveAccount returns the account matching name, or the first account when name is "".
+func (c *DeribitExchangeConfig) ResolveAccount(name string) (ExchangeAccount, bool) {
+	return resolveAccount(c.Accounts, name)
 }
 
 // BinanceExchangeConfig holds the Binance exchange credentials and settings.
