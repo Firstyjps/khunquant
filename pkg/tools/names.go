@@ -74,6 +74,11 @@ const (
 	NameDeFiWalletList            = "defi_wallet_list"
 	NameDeFiWalletBalances        = "defi_wallet_balances"
 	NameDeFiPortfolio             = "defi_portfolio"
+	NameEntityAdd                 = "entity_add"
+	NameEntityRemove              = "entity_remove"
+	NameEntityList                = "entity_list"
+	NameEntityHoldings            = "entity_holdings"
+	NameEntityFlows               = "entity_flows"
 	NameFuturesEmergencyFlatten   = "futures_emergency_flatten"
 	NameFundingRateHistory        = "funding_rate_history"
 
