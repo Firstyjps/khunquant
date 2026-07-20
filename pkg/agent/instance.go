@@ -11,6 +11,7 @@ import (
 
 	"github.com/cryptoquantumwave/khunquant/pkg/config"
 	"github.com/cryptoquantumwave/khunquant/pkg/defi"
+	"github.com/cryptoquantumwave/khunquant/pkg/entity"
 	"github.com/cryptoquantumwave/khunquant/pkg/logger"
 	"github.com/cryptoquantumwave/khunquant/pkg/media"
 	"github.com/cryptoquantumwave/khunquant/pkg/memory"
@@ -291,6 +292,33 @@ func NewAgentInstance(
 	}
 	if cfg.Tools.IsToolEnabled("defi_wallet_balances") {
 		toolsRegistry.Register(tools.NewDeFiWalletBalancesTool())
+	}
+
+	// On-chain entity tracker (Arkham-style) — read-only, shares one registry.
+	entityEnabled := cfg.Tools.IsToolEnabled("entity_add") || cfg.Tools.IsToolEnabled("entity_remove") ||
+		cfg.Tools.IsToolEnabled("entity_list") || cfg.Tools.IsToolEnabled("entity_holdings") ||
+		cfg.Tools.IsToolEnabled("entity_flows")
+	if entityEnabled {
+		entityStore, err := entity.NewStore(workspace)
+		if err != nil {
+			log.Printf("entity: init store: %v; entity tracker tools disabled", err)
+		} else {
+			if cfg.Tools.IsToolEnabled("entity_add") {
+				toolsRegistry.Register(tools.NewEntityAddTool(entityStore))
+			}
+			if cfg.Tools.IsToolEnabled("entity_remove") {
+				toolsRegistry.Register(tools.NewEntityRemoveTool(entityStore))
+			}
+			if cfg.Tools.IsToolEnabled("entity_list") {
+				toolsRegistry.Register(tools.NewEntityListTool(entityStore))
+			}
+			if cfg.Tools.IsToolEnabled("entity_holdings") {
+				toolsRegistry.Register(tools.NewEntityHoldingsTool(entityStore))
+			}
+			if cfg.Tools.IsToolEnabled("entity_flows") {
+				toolsRegistry.Register(tools.NewEntityFlowsTool(entityStore))
+			}
+		}
 	}
 	if cfg.Tools.IsToolEnabled("futures_cancel_orders") {
 		toolsRegistry.Register(tools.NewFuturesCancelOrdersTool(cfg))
