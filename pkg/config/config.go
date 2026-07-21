@@ -572,6 +572,7 @@ type TelegramConfig struct {
 	Proxy              string              `json:"proxy"                   yaml:"-" env:"KHUNQUANT_CHANNELS_TELEGRAM_PROXY"`
 	AllowFrom          FlexibleStringSlice `json:"allow_from"              yaml:"-" env:"KHUNQUANT_CHANNELS_TELEGRAM_ALLOW_FROM"`
 	PairingEnabled     bool                `json:"pairing_enabled"         yaml:"-" env:"KHUNQUANT_CHANNELS_TELEGRAM_PAIRING_ENABLED"`
+	IgnoredThreads     FlexibleStringSlice `json:"ignored_threads"         yaml:"-" env:"KHUNQUANT_CHANNELS_TELEGRAM_IGNORED_THREADS"`
 	GroupTrigger       GroupTriggerConfig  `json:"group_trigger,omitempty" yaml:"-"`
 	Typing             TypingConfig        `json:"typing,omitempty"        yaml:"-"`
 	Placeholder        PlaceholderConfig   `json:"placeholder,omitempty"   yaml:"-"`

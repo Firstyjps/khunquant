@@ -613,6 +613,20 @@ func (c *TelegramChannel) handleMessage(ctx context.Context, message *telego.Mes
 		return nil
 	}
 
+	// Drop messages from ignored forum topics (config ignored_threads /
+	// env KHUNQUANT_CHANNELS_TELEGRAM_IGNORED_THREADS, comma-separated thread IDs).
+	if message.MessageThreadID != 0 && c.config != nil {
+		threadIDStr := fmt.Sprintf("%d", message.MessageThreadID)
+		for _, ignored := range c.config.Channels.Telegram.IgnoredThreads {
+			if strings.TrimSpace(ignored) == threadIDStr {
+				logger.DebugCF("telegram", "Message ignored by ignored_threads", map[string]any{
+					"thread_id": threadIDStr,
+				})
+				return nil
+			}
+		}
+	}
+
 	chatID := message.Chat.ID
 	c.chatIDs[platformID] = chatID
 
